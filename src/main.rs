@@ -20,7 +20,7 @@ async fn main() -> Result<()> {
 
     // Setup logging
     let level = if cli.verbose { Level::DEBUG } else { Level::INFO };
-    let subscriber = FmtSubscriber::builder()
+    let _subscriber = FmtSubscriber::builder()
         .with_max_level(level)
         .with_target(false)
         .without_time()
