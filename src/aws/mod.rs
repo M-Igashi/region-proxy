@@ -1,3 +1,3 @@
 pub mod ec2;
 
-pub use ec2::{Ec2Manager, OrphanedResources};
+pub use ec2::Ec2Manager;
