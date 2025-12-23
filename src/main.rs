@@ -7,8 +7,8 @@ mod state;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;
-use cli::{Cli, Commands};
-use config::{find_region, REGIONS};
+use cli::{Cli, Commands, ConfigAction};
+use config::{find_region, Preferences, REGIONS};
 use state::ProxyState;
 use std::fs;
 use tracing::{error, info, warn, Level};
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
             instance_type,
             no_system_proxy,
         } => {
-            cmd_start(&region, port, instance_type.as_deref(), !no_system_proxy).await?;
+            cmd_start(region, port, instance_type, no_system_proxy).await?;
         }
         Commands::Stop { force } => {
             cmd_stop(force).await?;
@@ -51,31 +51,68 @@ async fn main() -> Result<()> {
         Commands::Cleanup { region } => {
             cmd_cleanup(region.as_deref()).await?;
         }
+        Commands::Config { action } => {
+            cmd_config(action)?;
+        }
     }
 
     Ok(())
 }
 
 async fn cmd_start(
-    region: &str,
-    port: u16,
-    instance_type: Option<&str>,
-    enable_system_proxy: bool,
+    region: Option<String>,
+    port: Option<u16>,
+    instance_type: Option<String>,
+    no_system_proxy: bool,
 ) -> Result<()> {
+    // Load preferences
+    let prefs = Preferences::load()?;
+
+    // Resolve region from CLI arg or preferences
+    let region = match region {
+        Some(r) => r,
+        None => match prefs.default_region {
+            Some(r) => {
+                info!("Using default region from config: {}", r);
+                r
+            }
+            None => {
+                bail!(
+                    "No region specified. Use --region or set a default with:\n  region-proxy config set-region <REGION>\n\nUse 'region-proxy list-regions' to see available regions."
+                );
+            }
+        },
+    };
+
+    // Resolve port from CLI arg or preferences
+    let port = port.or(prefs.default_port).unwrap_or(1080);
+
+    // Resolve instance_type from CLI arg or preferences
+    let instance_type = instance_type.or(prefs.default_instance_type);
+
+    // Resolve no_system_proxy from CLI flag or preferences
+    let enable_system_proxy = if no_system_proxy {
+        false
+    } else {
+        !prefs.no_system_proxy.unwrap_or(false)
+    };
+
     // Check if already running
     if ProxyState::is_running()? {
         bail!("A proxy is already running. Use 'region-proxy stop' first.");
     }
 
     // Validate region
-    let region_info = find_region(region).with_context(|| {
+    let region_info = find_region(&region).with_context(|| {
         format!(
             "Unknown region: {}. Use 'region-proxy list-regions' to see available regions.",
             region
         )
     })?;
 
-    let instance_type = instance_type.unwrap_or(region_info.default_instance_type());
+    let instance_type = instance_type
+        .as_deref()
+        .unwrap_or(region_info.default_instance_type());
     let is_arm = instance_type.starts_with("t4g")
         || instance_type.starts_with("m7g")
         || instance_type.starts_with("c7g");
@@ -85,7 +122,7 @@ async fn cmd_start(
     info!("   Local port: {}", port);
 
     // Create EC2 manager
-    let ec2 = aws::Ec2Manager::new(region).await?;
+    let ec2 = aws::Ec2Manager::new(&region).await?;
 
     // Find AMI
     info!("📦 Finding latest Amazon Linux 2023 AMI...");
@@ -375,6 +412,143 @@ async fn cmd_cleanup(region: Option<&str>) -> Result<()> {
     } else {
         println!();
         println!("Cleaned up {} resource(s).", total_cleaned);
+    }
+
+    Ok(())
+}
+
+fn cmd_config(action: ConfigAction) -> Result<()> {
+    match action {
+        ConfigAction::Show => {
+            let prefs = Preferences::load()?;
+            println!();
+            println!("⚙️  Configuration");
+            println!();
+
+            if prefs.is_empty() {
+                println!("   No configuration set.");
+                println!();
+                println!("   Set defaults with:");
+                println!("     region-proxy config set-region <REGION>");
+                println!("     region-proxy config set-port <PORT>");
+            } else {
+                if let Some(ref region) = prefs.default_region {
+                    let region_name = find_region(region).map(|r| r.name).unwrap_or("Unknown");
+                    println!("   Default region:        {} ({})", region, region_name);
+                }
+                if let Some(port) = prefs.default_port {
+                    println!("   Default port:          {}", port);
+                }
+                if let Some(ref instance_type) = prefs.default_instance_type {
+                    println!("   Default instance type: {}", instance_type);
+                }
+                if let Some(no_system_proxy) = prefs.no_system_proxy {
+                    println!("   Skip system proxy:     {}", no_system_proxy);
+                }
+            }
+
+            println!();
+            println!("   Config file: {}", Preferences::config_file_path()?.display());
+            println!();
+        }
+
+        ConfigAction::SetRegion { region } => {
+            // Validate region
+            if find_region(&region).is_none() {
+                bail!(
+                    "Unknown region: {}. Use 'region-proxy list-regions' to see available regions.",
+                    region
+                );
+            }
+
+            let mut prefs = Preferences::load()?;
+            prefs.set_default_region(Some(region.clone()));
+            prefs.save()?;
+
+            let region_name = find_region(&region).map(|r| r.name).unwrap_or("Unknown");
+            println!("✅ Default region set to: {} ({})", region, region_name);
+        }
+
+        ConfigAction::SetPort { port } => {
+            if port == 0 {
+                bail!("Port must be greater than 0");
+            }
+
+            let mut prefs = Preferences::load()?;
+            prefs.set_default_port(Some(port));
+            prefs.save()?;
+
+            println!("✅ Default port set to: {}", port);
+        }
+
+        ConfigAction::SetInstanceType { instance_type } => {
+            let mut prefs = Preferences::load()?;
+            prefs.set_default_instance_type(Some(instance_type.clone()));
+            prefs.save()?;
+
+            println!("✅ Default instance type set to: {}", instance_type);
+        }
+
+        ConfigAction::SetNoSystemProxy { value } => {
+            let value = match value.to_lowercase().as_str() {
+                "true" | "1" | "yes" => true,
+                "false" | "0" | "no" => false,
+                _ => bail!("Invalid value: {}. Use 'true' or 'false'", value),
+            };
+
+            let mut prefs = Preferences::load()?;
+            prefs.set_no_system_proxy(Some(value));
+            prefs.save()?;
+
+            if value {
+                println!("✅ System proxy configuration will be skipped by default");
+            } else {
+                println!("✅ System proxy will be configured by default");
+            }
+        }
+
+        ConfigAction::Unset { option } => {
+            let mut prefs = Preferences::load()?;
+
+            match option.as_str() {
+                "region" => {
+                    prefs.set_default_region(None);
+                    prefs.save()?;
+                    println!("✅ Default region cleared");
+                }
+                "port" => {
+                    prefs.set_default_port(None);
+                    prefs.save()?;
+                    println!("✅ Default port cleared");
+                }
+                "instance-type" => {
+                    prefs.set_default_instance_type(None);
+                    prefs.save()?;
+                    println!("✅ Default instance type cleared");
+                }
+                "no-system-proxy" => {
+                    prefs.set_no_system_proxy(None);
+                    prefs.save()?;
+                    println!("✅ System proxy preference cleared");
+                }
+                _ => {
+                    bail!(
+                        "Unknown option: {}. Valid options: region, port, instance-type, no-system-proxy",
+                        option
+                    );
+                }
+            }
+        }
+
+        ConfigAction::Reset => {
+            let path = Preferences::config_file_path()?;
+            if path.exists() {
+                fs::remove_file(&path)?;
+                println!("✅ Configuration reset to defaults");
+            } else {
+                println!("No configuration file to reset.");
+            }
+        }
     }
 
     Ok(())
