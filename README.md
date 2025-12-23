@@ -1,5 +1,6 @@
 # region-proxy
 
+[![CI](https://github.com/M-Igashi/region-proxy/actions/workflows/ci.yml/badge.svg)](https://github.com/M-Igashi/region-proxy/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Rust](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org/)
 
@@ -17,7 +18,7 @@ A CLI tool to create a SOCKS proxy through AWS EC2 in any region. Useful when yo
 ## Prerequisites
 
 - macOS (Linux support coming soon)
-- AWS CLI configured with valid credentials (`~/.aws/credentials` or environment variables)
+- AWS account with appropriate IAM permissions (see [AWS Setup](#aws-setup))
 - Rust 1.75+ (for building from source)
 
 ## Installation
@@ -33,8 +34,76 @@ cargo install --path .
 ### Homebrew (coming soon)
 
 ```bash
-brew install reponame/tap/region-proxy
+brew install M-Igashi/tap/region-proxy
 ```
+
+## AWS Setup
+
+### 1. Create IAM Policy
+
+Create an IAM policy with the following permissions:
+
+```json
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Effect": "Allow",
+            "Action": [
+                "ec2:DescribeImages",
+                "ec2:DescribeInstances",
+                "ec2:DescribeSecurityGroups",
+                "ec2:DescribeKeyPairs",
+                "ec2:RunInstances",
+                "ec2:TerminateInstances",
+                "ec2:CreateSecurityGroup",
+                "ec2:DeleteSecurityGroup",
+                "ec2:AuthorizeSecurityGroupIngress",
+                "ec2:CreateKeyPair",
+                "ec2:DeleteKeyPair",
+                "ec2:CreateTags"
+            ],
+            "Resource": "*"
+        }
+    ]
+}
+```
+
+**Steps to create the policy:**
+
+1. Go to [AWS IAM Console](https://console.aws.amazon.com/iam/) → **Policies** → **Create policy**
+2. Select **JSON** tab and paste the above policy
+3. Click **Next**, enter policy name (e.g., `region-proxy-ec2-policy`)
+4. Click **Create policy**
+
+### 2. Create IAM User and Attach Policy
+
+1. Go to **Users** → **Create user**
+2. Enter username and click **Next**
+3. Select **Attach policies directly**
+4. Search for and select your created policy (`region-proxy-ec2-policy`)
+5. Click **Next** → **Create user**
+
+### 3. Create Access Key
+
+1. Go to **Users** → Select your user → **Security credentials**
+2. Click **Create access key**
+3. Select **Command Line Interface (CLI)**
+4. Check the confirmation checkbox and click **Next**
+5. Click **Create access key**
+6. **Important**: Copy both **Access key ID** and **Secret access key** (shown only once!)
+
+### 4. Configure AWS CLI
+
+```bash
+aws configure
+```
+
+Enter the following when prompted:
+- **AWS Access Key ID**: Your access key (starts with `AKIA...`)
+- **AWS Secret Access Key**: Your secret key
+- **Default region name**: `ap-northeast-1` (or your preferred region)
+- **Default output format**: `json`
 
 ## Usage
 
@@ -122,6 +191,24 @@ The tool stores its state and keys in `~/.region-proxy/`:
 
 ## Troubleshooting
 
+### "AuthFailure" or "AWS was not able to validate the provided access credentials"
+
+Your AWS credentials are invalid or not configured properly:
+
+1. Verify your credentials are set:
+   ```bash
+   cat ~/.aws/credentials
+   ```
+
+2. Ensure the Access Key ID starts with `AKIA...`
+
+3. Reconfigure if needed:
+   ```bash
+   aws configure
+   ```
+
+4. Check that your IAM user has the required permissions (see [AWS Setup](#aws-setup))
+
 ### "No AWS credentials found"
 
 Make sure you have AWS credentials configured:
@@ -142,6 +229,10 @@ The tool automatically sets the correct permissions on the SSH key file. If you 
 ```bash
 region-proxy status
 ```
+
+### "UnauthorizedOperation" errors
+
+Your IAM user lacks the required EC2 permissions. Make sure you've attached the correct IAM policy (see [AWS Setup](#aws-setup)).
 
 ### Orphaned resources
 
