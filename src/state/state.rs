@@ -68,3 +68,79 @@ impl ProxyState {
         Ok(Self::load()?.is_some())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn create_test_state() -> ProxyState {
+        ProxyState {
+            instance_id: "i-1234567890abcdef0".to_string(),
+            region: "ap-northeast-1".to_string(),
+            public_ip: "54.150.123.45".to_string(),
+            security_group_id: "sg-0123456789abcdef0".to_string(),
+            key_pair_name: "region-proxy-test-key".to_string(),
+            key_path: PathBuf::from("/tmp/test-key.pem"),
+            local_port: 1080,
+            ssh_pid: Some(12345),
+            started_at: Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap(),
+        }
+    }
+
+    #[test]
+    fn test_serialize_deserialize() {
+        let state = create_test_state();
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: ProxyState = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(state.instance_id, deserialized.instance_id);
+        assert_eq!(state.region, deserialized.region);
+        assert_eq!(state.public_ip, deserialized.public_ip);
+        assert_eq!(state.security_group_id, deserialized.security_group_id);
+        assert_eq!(state.key_pair_name, deserialized.key_pair_name);
+        assert_eq!(state.key_path, deserialized.key_path);
+        assert_eq!(state.local_port, deserialized.local_port);
+        assert_eq!(state.ssh_pid, deserialized.ssh_pid);
+        assert_eq!(state.started_at, deserialized.started_at);
+    }
+
+    #[test]
+    fn test_serialize_without_ssh_pid() {
+        let mut state = create_test_state();
+        state.ssh_pid = None;
+
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: ProxyState = serde_json::from_str(&json).unwrap();
+
+        assert!(deserialized.ssh_pid.is_none());
+    }
+
+    #[test]
+    fn test_json_format() {
+        let state = create_test_state();
+        let json = serde_json::to_string_pretty(&state).unwrap();
+
+        assert!(json.contains("instance_id"));
+        assert!(json.contains("i-1234567890abcdef0"));
+        assert!(json.contains("region"));
+        assert!(json.contains("ap-northeast-1"));
+        assert!(json.contains("public_ip"));
+        assert!(json.contains("local_port"));
+        assert!(json.contains("1080"));
+    }
+
+    #[test]
+    fn test_state_file_path() {
+        let path = ProxyState::state_file_path().unwrap();
+        assert!(path.to_string_lossy().contains(".region-proxy"));
+        assert!(path.to_string_lossy().ends_with("state.json"));
+    }
+
+    #[test]
+    fn test_keys_dir() {
+        let path = ProxyState::keys_dir().unwrap();
+        assert!(path.to_string_lossy().contains(".region-proxy"));
+        assert!(path.to_string_lossy().ends_with("keys"));
+    }
+}
