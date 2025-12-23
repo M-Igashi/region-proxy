@@ -17,3 +17,6 @@ Cargo.lock
 
 # Test keys (don't commit real keys)
 *.pem
+
+# Homebrew tap (separate repository)
+/homebrew/

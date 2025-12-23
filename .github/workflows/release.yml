@@ -1,0 +1,114 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin,aarch64-apple-darwin
+
+      - name: Build release (x86_64)
+        run: cargo build --release --target x86_64-apple-darwin
+
+      - name: Build release (aarch64)
+        run: cargo build --release --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: |
+          lipo -create \
+            target/x86_64-apple-darwin/release/region-proxy \
+            target/aarch64-apple-darwin/release/region-proxy \
+            -output region-proxy
+
+      - name: Create tarball
+        run: |
+          tar -czvf region-proxy-${{ github.ref_name }}-macos.tar.gz region-proxy
+
+      - name: Calculate SHA256
+        id: sha256
+        run: |
+          SHA256=$(shasum -a 256 region-proxy-${{ github.ref_name }}-macos.tar.gz | cut -d ' ' -f 1)
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: |
+            region-proxy-${{ github.ref_name }}-macos.tar.gz
+
+      - name: Save SHA256
+        run: echo "${{ steps.sha256.outputs.sha256 }}" > sha256-macos.txt
+
+      - name: Upload SHA256
+        uses: actions/upload-artifact@v4
+        with:
+          name: sha256-macos
+          path: sha256-macos.txt
+
+  release:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release
+
+      - name: Download SHA256
+        uses: actions/download-artifact@v4
+        with:
+          name: sha256-macos
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            region-proxy-${{ github.ref_name }}-macos.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-homebrew:
+    needs: [build-macos, release]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download SHA256
+        uses: actions/download-artifact@v4
+        with:
+          name: sha256-macos
+
+      - name: Read SHA256
+        id: sha256
+        run: |
+          SHA256=$(cat sha256-macos.txt)
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+
+      - name: Update Homebrew formula
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          repository: M-Igashi/homebrew-tap
+          event-type: update-formula
+          client-payload: |
+            {
+              "version": "${{ github.ref_name }}",
+              "sha256": "${{ steps.sha256.outputs.sha256 }}"
+            }
