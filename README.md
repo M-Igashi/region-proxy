@@ -31,10 +31,11 @@ cd region-proxy
 cargo install --path .
 ```
 
-### Homebrew (coming soon)
+### Homebrew
 
 ```bash
-brew install M-Igashi/tap/region-proxy
+brew tap M-Igashi/tap
+brew install region-proxy
 ```
 
 ## AWS Setup
