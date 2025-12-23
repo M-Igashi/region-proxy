@@ -10,6 +10,7 @@ A CLI tool to create a SOCKS proxy through AWS EC2 in any region. Useful when yo
 
 - 🌍 **Multi-region support**: Launch a proxy in any AWS region
 - 🚀 **One command setup**: Automatically handles EC2 instance, security groups, and SSH keys
+- ⚙️ **Configurable defaults**: Set default region, port, and other preferences
 - 🔒 **Secure**: Uses SSH dynamic port forwarding (SOCKS5 proxy)
 - 🍎 **macOS integration**: Automatically configures system-wide SOCKS proxy
 - 🧹 **Clean shutdown**: Automatically terminates EC2 instance and cleans up all AWS resources
@@ -108,17 +109,34 @@ Enter the following when prompted:
 
 ## Usage
 
+### Quick Start
+
+Set your default region once:
+
+```bash
+region-proxy config set-region ap-northeast-1
+```
+
+Then start with a single command:
+
+```bash
+region-proxy start
+```
+
 ### Start a proxy
 
 ```bash
-# Start a proxy in Tokyo region
+# Start using default region (must be configured first)
+region-proxy start
+
+# Start a proxy in a specific region
 region-proxy start --region ap-northeast-1
 
-# Start a proxy in Oregon with custom port
-region-proxy start --region us-west-2 --port 8080
+# Start a proxy with custom port
+region-proxy start --port 8080
 
 # Start without configuring system proxy
-region-proxy start --region eu-west-1 --no-system-proxy
+region-proxy start --no-system-proxy
 ```
 
 ### Check status
@@ -144,6 +162,35 @@ region-proxy list-regions
 # With details
 region-proxy list-regions --detailed
 ```
+
+### Configuration
+
+Configure default settings that persist across sessions:
+
+```bash
+# Show current configuration
+region-proxy config show
+
+# Set default region
+region-proxy config set-region ap-northeast-1
+
+# Set default port
+region-proxy config set-port 8080
+
+# Set default instance type
+region-proxy config set-instance-type t4g.micro
+
+# Skip system proxy configuration by default
+region-proxy config set-no-system-proxy true
+
+# Clear a specific setting
+region-proxy config unset region
+
+# Reset all configuration
+region-proxy config reset
+```
+
+Configuration is stored in `~/.region-proxy/config.json`.
 
 ### Cleanup orphaned resources
 
@@ -180,12 +227,13 @@ The tool uses the smallest available instance types:
 
 **Note**: You're only charged while the instance is running. Remember to stop the proxy when not in use!
 
-## Configuration
+## Configuration Files
 
-The tool stores its state and keys in `~/.region-proxy/`:
+The tool stores its configuration and state in `~/.region-proxy/`:
 
 ```
 ~/.region-proxy/
+├── config.json   # User preferences (default region, port, etc.)
 ├── state.json    # Current proxy state
 └── keys/         # Temporary SSH keys
 ```
@@ -221,6 +269,14 @@ aws configure
 # Option 2: Environment variables
 export AWS_ACCESS_KEY_ID=your_access_key
 export AWS_SECRET_ACCESS_KEY=your_secret_key
+```
+
+### "No region specified"
+
+Either specify a region with `--region` or set a default:
+
+```bash
+region-proxy config set-region ap-northeast-1
 ```
 
 ### "Permission denied" when starting SSH tunnel
