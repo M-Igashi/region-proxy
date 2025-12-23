@@ -121,3 +121,69 @@ pub fn find_region(code: &str) -> Option<&'static RegionInfo> {
 pub fn is_valid_region(code: &str) -> bool {
     find_region(code).is_some()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_region_tokyo() {
+        let region = find_region("ap-northeast-1");
+        assert!(region.is_some());
+        let region = region.unwrap();
+        assert_eq!(region.code, "ap-northeast-1");
+        assert_eq!(region.name, "Tokyo");
+        assert!(region.supports_arm);
+    }
+
+    #[test]
+    fn test_find_region_oregon() {
+        let region = find_region("us-west-2");
+        assert!(region.is_some());
+        let region = region.unwrap();
+        assert_eq!(region.code, "us-west-2");
+        assert_eq!(region.name, "Oregon");
+    }
+
+    #[test]
+    fn test_find_region_invalid() {
+        let region = find_region("invalid-region");
+        assert!(region.is_none());
+    }
+
+    #[test]
+    fn test_find_region_empty() {
+        let region = find_region("");
+        assert!(region.is_none());
+    }
+
+    #[test]
+    fn test_is_valid_region() {
+        assert!(is_valid_region("ap-northeast-1"));
+        assert!(is_valid_region("us-east-1"));
+        assert!(is_valid_region("eu-west-1"));
+        assert!(!is_valid_region("invalid"));
+        assert!(!is_valid_region(""));
+    }
+
+    #[test]
+    fn test_default_instance_type_arm() {
+        let region = find_region("ap-northeast-1").unwrap();
+        assert_eq!(region.default_instance_type(), "t4g.nano");
+    }
+
+    #[test]
+    fn test_regions_not_empty() {
+        assert!(!REGIONS.is_empty());
+        assert!(REGIONS.len() >= 17); // At least 17 regions defined
+    }
+
+    #[test]
+    fn test_all_regions_have_valid_codes() {
+        for region in REGIONS {
+            assert!(!region.code.is_empty());
+            assert!(!region.name.is_empty());
+            assert!(region.code.contains('-')); // AWS region codes contain hyphens
+        }
+    }
+}
