@@ -19,8 +19,12 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Setup logging
-    let level = if cli.verbose { Level::DEBUG } else { Level::INFO };
-    let _subscriber = FmtSubscriber::builder()
+    let level = if cli.verbose {
+        Level::DEBUG
+    } else {
+        Level::INFO
+    };
+    FmtSubscriber::builder()
         .with_max_level(level)
         .with_target(false)
         .without_time()
@@ -64,11 +68,17 @@ async fn cmd_start(
     }
 
     // Validate region
-    let region_info = find_region(region)
-        .with_context(|| format!("Unknown region: {}. Use 'region-proxy list-regions' to see available regions.", region))?;
+    let region_info = find_region(region).with_context(|| {
+        format!(
+            "Unknown region: {}. Use 'region-proxy list-regions' to see available regions.",
+            region
+        )
+    })?;
 
     let instance_type = instance_type.unwrap_or(region_info.default_instance_type());
-    let is_arm = instance_type.starts_with("t4g") || instance_type.starts_with("m7g") || instance_type.starts_with("c7g");
+    let is_arm = instance_type.starts_with("t4g")
+        || instance_type.starts_with("m7g")
+        || instance_type.starts_with("c7g");
 
     info!("🚀 Starting proxy in {} ({})", region_info.name, region);
     info!("   Instance type: {}", instance_type);
@@ -267,8 +277,22 @@ async fn cmd_status() -> Result<()> {
     println!("   Instance:    {}", state.instance_id);
     println!("   Public IP:   {}", state.public_ip);
     println!("   SOCKS:       localhost:{}", state.local_port);
-    println!("   SSH tunnel:  {}", if ssh_running { "✅ Running" } else { "❌ Not running" });
-    println!("   System proxy: {}", if proxy_enabled { "✅ Enabled" } else { "❌ Disabled" });
+    println!(
+        "   SSH tunnel:  {}",
+        if ssh_running {
+            "✅ Running"
+        } else {
+            "❌ Not running"
+        }
+    );
+    println!(
+        "   System proxy: {}",
+        if proxy_enabled {
+            "✅ Enabled"
+        } else {
+            "❌ Disabled"
+        }
+    );
     println!("   Running for: {}h {}m", hours, minutes);
     println!();
 
@@ -281,7 +305,7 @@ fn cmd_list_regions(detailed: bool) {
     println!();
 
     if detailed {
-        println!("{:<20} {:<20} {}", "Code", "Name", "Default Instance");
+        println!("{:<20} {:<20} Default Instance", "Code", "Name");
         println!("{}", "-".repeat(55));
         for region in REGIONS {
             println!(

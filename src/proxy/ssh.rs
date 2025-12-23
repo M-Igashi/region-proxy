@@ -6,12 +6,7 @@ use tokio::time::sleep;
 use tracing::{debug, info};
 
 /// Start SSH dynamic forwarding in the background
-pub fn start_ssh_tunnel(
-    host: &str,
-    key_path: &Path,
-    local_port: u16,
-    user: &str,
-) -> Result<u32> {
+pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16, user: &str) -> Result<u32> {
     info!(
         "Starting SSH tunnel to {}@{} on port {}",
         user, host, local_port
