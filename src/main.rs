@@ -448,7 +448,10 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
             }
 
             println!();
-            println!("   Config file: {}", Preferences::config_file_path()?.display());
+            println!(
+                "   Config file: {}",
+                Preferences::config_file_path()?.display()
+            );
             println!();
         }
 

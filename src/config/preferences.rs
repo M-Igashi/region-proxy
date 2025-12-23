@@ -171,10 +171,7 @@ mod tests {
         assert_eq!(prefs.default_port, Some(9999));
 
         prefs.set_default_instance_type(Some("t3.micro".to_string()));
-        assert_eq!(
-            prefs.default_instance_type,
-            Some("t3.micro".to_string())
-        );
+        assert_eq!(prefs.default_instance_type, Some("t3.micro".to_string()));
 
         prefs.set_no_system_proxy(Some(true));
         assert_eq!(prefs.no_system_proxy, Some(true));
