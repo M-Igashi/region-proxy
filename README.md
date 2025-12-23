@@ -25,7 +25,7 @@ A CLI tool to create a SOCKS proxy through AWS EC2 in any region. Useful when yo
 ### From source
 
 ```bash
-git clone https://github.com/yourusername/region-proxy.git
+git clone https://github.com/M-Igashi/region-proxy.git
 cd region-proxy
 cargo install --path .
 ```
@@ -33,7 +33,7 @@ cargo install --path .
 ### Homebrew (coming soon)
 
 ```bash
-brew install yourusername/tap/region-proxy
+brew install reponame/tap/region-proxy
 ```
 
 ## Usage
