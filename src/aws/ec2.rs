@@ -13,6 +13,7 @@ const RESOURCE_PREFIX: &str = "region-proxy";
 /// EC2 Manager for handling all EC2 operations
 pub struct Ec2Manager {
     client: Client,
+    #[allow(dead_code)]
     region: String,
 }
 
@@ -47,18 +48,8 @@ impl Ec2Manager {
                     .values(format!("al2023-ami-2023.*-{}", arch))
                     .build(),
             )
-            .filters(
-                Filter::builder()
-                    .name("state")
-                    .values("available")
-                    .build(),
-            )
-            .filters(
-                Filter::builder()
-                    .name("architecture")
-                    .values(arch)
-                    .build(),
-            )
+            .filters(Filter::builder().name("state").values("available").build())
+            .filters(Filter::builder().name("architecture").values(arch).build())
             .send()
             .await
             .context("Failed to describe images")?;
@@ -73,7 +64,7 @@ impl Ec2Manager {
         images.sort_by(|a, b| {
             b.creation_date()
                 .unwrap_or_default()
-                .cmp(&a.creation_date().unwrap_or_default())
+                .cmp(a.creation_date().unwrap_or_default())
         });
 
         let ami_id = images[0]
@@ -98,12 +89,7 @@ impl Ec2Manager {
             .tag_specifications(
                 TagSpecification::builder()
                     .resource_type(ResourceType::SecurityGroup)
-                    .tags(
-                        Tag::builder()
-                            .key("Name")
-                            .value(&group_name)
-                            .build(),
-                    )
+                    .tags(Tag::builder().key("Name").value(&group_name).build())
                     .tags(
                         Tag::builder()
                             .key("CreatedBy")
@@ -183,10 +169,7 @@ impl Ec2Manager {
         security_group_id: &str,
         key_name: &str,
     ) -> Result<String> {
-        info!(
-            "Launching instance: type={}, ami={}",
-            instance_type, ami_id
-        );
+        info!("Launching instance: type={}, ami={}", instance_type, ami_id);
 
         let instance_type = InstanceType::from(instance_type);
 
@@ -257,16 +240,19 @@ impl Ec2Manager {
                 .and_then(|s| s.name())
                 .unwrap_or(&InstanceStateName::Pending);
 
-            debug!("Instance state: {:?} (attempt {}/{})", state, attempt, max_attempts);
+            debug!(
+                "Instance state: {:?} (attempt {}/{})",
+                state, attempt, max_attempts
+            );
 
             if *state == InstanceStateName::Running {
                 if let Some(ip) = instance.public_ip_address() {
                     info!("Instance is running with IP: {}", ip);
-                    
+
                     // Wait a bit more for SSH to be ready
                     info!("Waiting for SSH to be ready...");
                     sleep(Duration::from_secs(15)).await;
-                    
+
                     return Ok(ip.to_string());
                 }
             }

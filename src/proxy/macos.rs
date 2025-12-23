@@ -11,10 +11,15 @@ pub fn get_active_network_service() -> Result<String> {
         .context("Failed to list network services")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     // Try common service names in order of preference
-    let preferred_services = ["Wi-Fi", "Ethernet", "USB 10/100/1000 LAN", "Thunderbolt Ethernet"];
-    
+    let preferred_services = [
+        "Wi-Fi",
+        "Ethernet",
+        "USB 10/100/1000 LAN",
+        "Thunderbolt Ethernet",
+    ];
+
     for service in preferred_services {
         if stdout.contains(service) {
             // Verify the service is active
@@ -22,7 +27,7 @@ pub fn get_active_network_service() -> Result<String> {
                 .arg("-getinfo")
                 .arg(service)
                 .output();
-            
+
             if let Ok(status_output) = status {
                 let status_str = String::from_utf8_lossy(&status_output.stdout);
                 if status_str.contains("IP address:") && !status_str.contains("IP address: none") {
@@ -106,6 +111,7 @@ pub fn is_socks_proxy_enabled() -> Result<bool> {
 }
 
 /// Get current SOCKS proxy settings
+#[allow(dead_code)]
 pub fn get_socks_proxy_settings() -> Result<Option<(String, u16)>> {
     let service = get_active_network_service()?;
 
@@ -116,7 +122,7 @@ pub fn get_socks_proxy_settings() -> Result<Option<(String, u16)>> {
         .context("Failed to get SOCKS proxy settings")?;
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    
+
     if !stdout.contains("Enabled: Yes") {
         return Ok(None);
     }

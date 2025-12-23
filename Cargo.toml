@@ -1,7 +1,7 @@
 [package]
 name = "region-proxy"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 authors = ["Masanari Higashi"]
 description = "A CLI tool to create a SOCKS proxy through AWS EC2 in any region"
 license = "MIT"
