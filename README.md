@@ -20,7 +20,8 @@ A CLI tool to create a SOCKS proxy through AWS EC2 in any region. Useful when yo
 
 - macOS (Linux support coming soon)
 - AWS account with appropriate IAM permissions (see [AWS Setup](#aws-setup))
-- Rust 1.75+ (for building from source)
+- AWS CLI ($ brew install awscli)
+- Rust 1.75+ (only for building from source)
 
 ## Installation
 
