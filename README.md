@@ -306,7 +306,3 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
-
-## Acknowledgments
-
-Inspired by [this DevelopersIO article](https://dev.classmethod.jp/articles/ssh-dynamic-forwarding-with-elastick-ip/) about using SSH dynamic forwarding with AWS EC2.
