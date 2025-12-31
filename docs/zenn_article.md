@@ -16,6 +16,12 @@ published: false
 
 https://github.com/M-Igashi/region-proxy
 
+## デモ
+
+実際の動作をご覧ください。コマンド一発で東京リージョンにプロキシを立ち上げ、IPアドレスが日本に変わるのを確認し、停止時に全リソースが自動削除されます。
+
+![region-proxy demo](https://raw.githubusercontent.com/M-Igashi/region-proxy/master/docs/demo.gif)
+
 ## region-proxy とは
 
 region-proxyは、**AWS EC2インスタンスを任意のリージョンで起動し、SSHダイナミックポートフォワーディングでSOCKS5プロキシを構築する**CLIツールです。
@@ -48,6 +54,17 @@ $ region-proxy start --region ap-northeast-1
 「AWSアカウントさえあれば、コマンド一発で好きなリージョンのプロキシを立てたい」
 
 この単純な願望から region-proxy は生まれました。
+
+## 他のソリューションとの比較
+
+| 機能 | region-proxy | 手動EC2 | VPNサービス |
+|------|-------------|---------|------------|
+| セットアップ時間 | 約30秒 | 約10分 | 様々 |
+| コスト | ~$0.004/時間 | 同じ | $5-15/月 |
+| AWSリージョン | 全33箇所 | 全33箇所 | 限定的 |
+| 自動クリーンアップ | ✅ | ❌ | N/A |
+| サブスク不要 | ✅ | ✅ | ❌ |
+| オープンソース | ✅ | N/A | ❌ |
 
 ## アーキテクチャ
 
@@ -139,7 +156,7 @@ pub enum ProxyError {
 ### インストール
 
 ```bash
-# Homebrew
+# Homebrew（推奨）
 brew tap M-Igashi/tap
 brew install region-proxy
 
@@ -166,19 +183,26 @@ region-proxy stop
 ### 利用可能なリージョン一覧
 
 ```bash
-$ region-proxy list-regions --detailed
+$ region-proxy list-regions
 
-Americas:
-  us-east-1      US East (N. Virginia)         t4g.nano
-  us-east-2      US East (Ohio)                t4g.nano
-  us-west-1      US West (N. California)       t3.nano
-  ...
+Available AWS Regions:
 
-Asia Pacific:
-  ap-northeast-1 Asia Pacific (Tokyo)          t4g.nano
-  ap-southeast-1 Asia Pacific (Singapore)      t4g.nano
+  ap-northeast-1 (Tokyo)
+  ap-northeast-2 (Seoul)
+  ap-southeast-1 (Singapore)
+  us-east-1 (N. Virginia)
+  us-west-2 (Oregon)
+  eu-west-1 (Ireland)
+  eu-central-1 (Frankfurt)
   ...
 ```
+
+## セキュリティ
+
+- 🔑 SSHキーはセッションごとに生成され、自動削除される
+- 🛡️ セキュリティグループはあなたのIPアドレスのみ許可
+- 💾 EC2インスタンスは停止時に終了（永続データなし）
+- 🏠 認証情報はローカルに保持（AWS以外に送信されない）
 
 ## コスト
 
@@ -191,13 +215,21 @@ Asia Pacific:
 
 **使った分だけ**の課金なので、必要なときだけ起動すれば月額数十円〜数百円程度です。
 
+## ユースケース
+
+- 🎮 **ゲーム**: リージョン制限のあるゲームサーバーやコンテンツにアクセス
+- 📺 **ストリーミング**: 地域制限のある動画コンテンツを視聴
+- 🧪 **テスト**: 異なる地理的位置からアプリケーションをテスト
+- 🔒 **プライバシー**: 異なるリージョン経由でトラフィックをルーティング
+- 💼 **開発**: リージョン固有のAPIやサービスにアクセス
+
 ## 今後の予定
 
 - [ ] Linux対応
 - [ ] 複数同時接続
 - [ ] 接続時間制限
 - [ ] コスト表示機能
-- [ ] Homebrew公式tap申請
+- [ ] IPv6対応
 
 ## まとめ
 
