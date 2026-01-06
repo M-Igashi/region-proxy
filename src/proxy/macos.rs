@@ -2,9 +2,7 @@ use anyhow::{Context, Result};
 use std::process::Command;
 use tracing::{debug, info};
 
-/// Get the active network service name (e.g., "Wi-Fi", "Ethernet")
-pub fn get_active_network_service() -> Result<String> {
-    // Get the list of network services
+fn get_active_network_service() -> Result<String> {
     let output = Command::new("networksetup")
         .arg("-listallnetworkservices")
         .output()
@@ -12,7 +10,6 @@ pub fn get_active_network_service() -> Result<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
 
-    // Try common service names in order of preference
     let preferred_services = [
         "Wi-Fi",
         "Ethernet",
@@ -22,7 +19,6 @@ pub fn get_active_network_service() -> Result<String> {
 
     for service in preferred_services {
         if stdout.contains(service) {
-            // Verify the service is active
             let status = Command::new("networksetup")
                 .arg("-getinfo")
                 .arg(service)
@@ -38,16 +34,13 @@ pub fn get_active_network_service() -> Result<String> {
         }
     }
 
-    // Fallback to Wi-Fi
     Ok("Wi-Fi".to_string())
 }
 
-/// Enable SOCKS proxy on macOS
 pub fn enable_socks_proxy(port: u16) -> Result<()> {
     let service = get_active_network_service()?;
     info!("Enabling SOCKS proxy on {} (localhost:{})", service, port);
 
-    // Set SOCKS proxy server
     let status = Command::new("networksetup")
         .arg("-setsocksfirewallproxy")
         .arg(&service)
@@ -60,7 +53,6 @@ pub fn enable_socks_proxy(port: u16) -> Result<()> {
         anyhow::bail!("networksetup command failed");
     }
 
-    // Enable SOCKS proxy
     let status = Command::new("networksetup")
         .arg("-setsocksfirewallproxystate")
         .arg(&service)
@@ -76,7 +68,6 @@ pub fn enable_socks_proxy(port: u16) -> Result<()> {
     Ok(())
 }
 
-/// Disable SOCKS proxy on macOS
 pub fn disable_socks_proxy() -> Result<()> {
     let service = get_active_network_service()?;
     info!("Disabling SOCKS proxy on {}", service);
@@ -96,7 +87,6 @@ pub fn disable_socks_proxy() -> Result<()> {
     Ok(())
 }
 
-/// Check if SOCKS proxy is currently enabled
 pub fn is_socks_proxy_enabled() -> Result<bool> {
     let service = get_active_network_service()?;
 
@@ -108,39 +98,4 @@ pub fn is_socks_proxy_enabled() -> Result<bool> {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.contains("Enabled: Yes"))
-}
-
-/// Get current SOCKS proxy settings
-#[allow(dead_code)]
-pub fn get_socks_proxy_settings() -> Result<Option<(String, u16)>> {
-    let service = get_active_network_service()?;
-
-    let output = Command::new("networksetup")
-        .arg("-getsocksfirewallproxy")
-        .arg(&service)
-        .output()
-        .context("Failed to get SOCKS proxy settings")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    if !stdout.contains("Enabled: Yes") {
-        return Ok(None);
-    }
-
-    let mut server = None;
-    let mut port = None;
-
-    for line in stdout.lines() {
-        if let Some(s) = line.strip_prefix("Server: ") {
-            server = Some(s.trim().to_string());
-        }
-        if let Some(p) = line.strip_prefix("Port: ") {
-            port = p.trim().parse().ok();
-        }
-    }
-
-    match (server, port) {
-        (Some(s), Some(p)) => Ok(Some((s, p))),
-        _ => Ok(None),
-    }
 }
