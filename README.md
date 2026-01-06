@@ -7,7 +7,31 @@
 
 A CLI tool to create a SOCKS proxy through AWS EC2 in any region.
 
-![region-proxy demo](docs/demo.gif)
+<p align="center">
+  <img src="docs/demo.gif" alt="region-proxy demo" width="800">
+</p>
+
+## Quick Start
+
+```bash
+# 1. Install
+brew tap M-Igashi/tap
+brew install region-proxy
+
+# 2. Set your default region (one-time setup)
+region-proxy config set-region ap-northeast-1
+
+# 3. Start the proxy
+region-proxy start
+
+# 4. Verify your IP is now in Tokyo
+curl ipinfo.io
+
+# 5. Stop when done
+region-proxy stop
+```
+
+That's it! After the initial setup, just run `region-proxy start` and `region-proxy stop`.
 
 ## Features
 
@@ -18,23 +42,6 @@ A CLI tool to create a SOCKS proxy through AWS EC2 in any region.
 - **macOS integration** – Automatically configures system-wide SOCKS proxy
 - **Clean shutdown** – Automatically terminates EC2 instance and cleans up all AWS resources
 - **Cost-effective** – Uses the smallest instance types (t4g.nano/t3.nano, ~$0.004/hour)
-
-## Quick Start
-
-```bash
-# Install
-brew tap M-Igashi/tap
-brew install region-proxy
-
-# Start proxy in Tokyo
-region-proxy start --region ap-northeast-1
-
-# Verify your IP
-curl ipinfo.io
-
-# Stop and cleanup
-region-proxy stop
-```
 
 ## Prerequisites
 
@@ -64,9 +71,10 @@ cargo install --path .
 ### Start a proxy
 
 ```bash
-region-proxy start --region ap-northeast-1
-region-proxy start --region us-west-2 --port 8080
-region-proxy start --no-system-proxy  # Don't configure system proxy
+region-proxy start                              # Use default region
+region-proxy start --region us-west-2           # Specify region
+region-proxy start --port 8080                  # Custom port
+region-proxy start --no-system-proxy            # Don't configure system proxy
 ```
 
 ### Check status
@@ -79,7 +87,7 @@ region-proxy status
 
 ```bash
 region-proxy stop
-region-proxy stop --force  # Continue even if some cleanup fails
+region-proxy stop --force    # Continue even if some cleanup fails
 ```
 
 ### List available regions
@@ -92,10 +100,10 @@ region-proxy list-regions --detailed
 ### Configuration
 
 ```bash
-region-proxy config show
-region-proxy config set-region ap-northeast-1
-region-proxy config set-port 8080
-region-proxy config reset
+region-proxy config show                        # Show current config
+region-proxy config set-region ap-northeast-1   # Set default region
+region-proxy config set-port 8080               # Set default port
+region-proxy config reset                       # Reset all settings
 ```
 
 ### Cleanup orphaned resources
