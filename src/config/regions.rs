@@ -6,7 +6,6 @@ pub struct RegionInfo {
     pub supports_arm: bool,
 }
 
-/// List of commonly used AWS regions
 pub const REGIONS: &[RegionInfo] = &[
     // Asia Pacific
     RegionInfo {
@@ -101,7 +100,6 @@ pub const REGIONS: &[RegionInfo] = &[
 ];
 
 impl RegionInfo {
-    /// Get the default instance type for this region
     pub fn default_instance_type(&self) -> &'static str {
         if self.supports_arm {
             "t4g.nano"
@@ -111,15 +109,8 @@ impl RegionInfo {
     }
 }
 
-/// Find a region by its code
 pub fn find_region(code: &str) -> Option<&'static RegionInfo> {
     REGIONS.iter().find(|r| r.code == code)
-}
-
-/// Check if a region code is valid
-#[allow(dead_code)]
-pub fn is_valid_region(code: &str) -> bool {
-    find_region(code).is_some()
 }
 
 #[cfg(test)]
@@ -128,9 +119,7 @@ mod tests {
 
     #[test]
     fn test_find_region_tokyo() {
-        let region = find_region("ap-northeast-1");
-        assert!(region.is_some());
-        let region = region.unwrap();
+        let region = find_region("ap-northeast-1").unwrap();
         assert_eq!(region.code, "ap-northeast-1");
         assert_eq!(region.name, "Tokyo");
         assert!(region.supports_arm);
@@ -138,32 +127,19 @@ mod tests {
 
     #[test]
     fn test_find_region_oregon() {
-        let region = find_region("us-west-2");
-        assert!(region.is_some());
-        let region = region.unwrap();
+        let region = find_region("us-west-2").unwrap();
         assert_eq!(region.code, "us-west-2");
         assert_eq!(region.name, "Oregon");
     }
 
     #[test]
     fn test_find_region_invalid() {
-        let region = find_region("invalid-region");
-        assert!(region.is_none());
+        assert!(find_region("invalid-region").is_none());
     }
 
     #[test]
     fn test_find_region_empty() {
-        let region = find_region("");
-        assert!(region.is_none());
-    }
-
-    #[test]
-    fn test_is_valid_region() {
-        assert!(is_valid_region("ap-northeast-1"));
-        assert!(is_valid_region("us-east-1"));
-        assert!(is_valid_region("eu-west-1"));
-        assert!(!is_valid_region("invalid"));
-        assert!(!is_valid_region(""));
+        assert!(find_region("").is_none());
     }
 
     #[test]
@@ -175,7 +151,7 @@ mod tests {
     #[test]
     fn test_regions_not_empty() {
         assert!(!REGIONS.is_empty());
-        assert!(REGIONS.len() >= 17); // At least 17 regions defined
+        assert!(REGIONS.len() >= 17);
     }
 
     #[test]
@@ -183,7 +159,7 @@ mod tests {
         for region in REGIONS {
             assert!(!region.code.is_empty());
             assert!(!region.name.is_empty());
-            assert!(region.code.contains('-')); // AWS region codes contain hyphens
+            assert!(region.code.contains('-'));
         }
     }
 }

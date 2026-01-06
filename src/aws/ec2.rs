@@ -10,15 +10,11 @@ use tracing::{debug, info};
 
 const RESOURCE_PREFIX: &str = "region-proxy";
 
-/// EC2 Manager for handling all EC2 operations
 pub struct Ec2Manager {
     client: Client,
-    #[allow(dead_code)]
-    region: String,
 }
 
 impl Ec2Manager {
-    /// Create a new EC2 manager for the specified region
     pub async fn new(region: &str) -> Result<Self> {
         let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
             .region(aws_sdk_ec2::config::Region::new(region.to_string()))
@@ -26,14 +22,9 @@ impl Ec2Manager {
             .await;
 
         let client = Client::new(&config);
-
-        Ok(Self {
-            client,
-            region: region.to_string(),
-        })
+        Ok(Self { client })
     }
 
-    /// Find the latest Amazon Linux 2023 AMI for the given architecture
     pub async fn find_latest_ami(&self, arm: bool) -> Result<String> {
         let arch = if arm { "arm64" } else { "x86_64" };
         info!("Finding latest Amazon Linux 2023 AMI for {}", arch);
@@ -59,7 +50,6 @@ impl Ec2Manager {
             bail!("No Amazon Linux 2023 AMI found for architecture {}", arch);
         }
 
-        // Sort by creation date and get the latest
         let mut images: Vec<_> = images.iter().collect();
         images.sort_by(|a, b| {
             b.creation_date()
@@ -76,7 +66,6 @@ impl Ec2Manager {
         Ok(ami_id)
     }
 
-    /// Create a security group for SSH access
     pub async fn create_security_group(&self) -> Result<String> {
         let group_name = format!("{}-{}", RESOURCE_PREFIX, uuid::Uuid::new_v4());
         info!("Creating security group: {}", group_name);
@@ -107,8 +96,6 @@ impl Ec2Manager {
             .context("Security group has no ID")?
             .to_string();
 
-        // Add SSH ingress rule (allow from anywhere for simplicity)
-        // In production, you might want to restrict to current IP
         self.client
             .authorize_security_group_ingress()
             .group_id(&group_id)
@@ -128,7 +115,6 @@ impl Ec2Manager {
         Ok(group_id)
     }
 
-    /// Create a key pair and return the private key
     pub async fn create_key_pair(&self) -> Result<(String, String)> {
         let key_name = format!("{}-{}", RESOURCE_PREFIX, uuid::Uuid::new_v4());
         info!("Creating key pair: {}", key_name);
@@ -161,7 +147,6 @@ impl Ec2Manager {
         Ok((key_name, private_key))
     }
 
-    /// Launch an EC2 instance
     pub async fn launch_instance(
         &self,
         ami_id: &str,
@@ -215,7 +200,6 @@ impl Ec2Manager {
         Ok(instance_id)
     }
 
-    /// Wait for instance to be running and return its public IP
     pub async fn wait_for_instance(&self, instance_id: &str) -> Result<String> {
         info!("Waiting for instance {} to be running...", instance_id);
 
@@ -248,11 +232,8 @@ impl Ec2Manager {
             if *state == InstanceStateName::Running {
                 if let Some(ip) = instance.public_ip_address() {
                     info!("Instance is running with IP: {}", ip);
-
-                    // Wait a bit more for SSH to be ready
                     info!("Waiting for SSH to be ready...");
                     sleep(Duration::from_secs(15)).await;
-
                     return Ok(ip.to_string());
                 }
             }
@@ -268,7 +249,6 @@ impl Ec2Manager {
         bail!("Timeout waiting for instance to be running");
     }
 
-    /// Terminate an instance
     pub async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
         info!("Terminating instance: {}", instance_id);
 
@@ -279,7 +259,6 @@ impl Ec2Manager {
             .await
             .context("Failed to terminate instance")?;
 
-        // Wait for termination
         let max_attempts = 30;
         for _ in 1..=max_attempts {
             let resp = self
@@ -307,11 +286,9 @@ impl Ec2Manager {
         Ok(())
     }
 
-    /// Delete a security group
     pub async fn delete_security_group(&self, group_id: &str) -> Result<()> {
         info!("Deleting security group: {}", group_id);
 
-        // Retry a few times as the security group might still be in use
         for attempt in 1..=5 {
             match self
                 .client
@@ -338,7 +315,6 @@ impl Ec2Manager {
         Ok(())
     }
 
-    /// Delete a key pair
     pub async fn delete_key_pair(&self, key_name: &str) -> Result<()> {
         info!("Deleting key pair: {}", key_name);
 
@@ -353,11 +329,9 @@ impl Ec2Manager {
         Ok(())
     }
 
-    /// Find orphaned resources created by region-proxy
     pub async fn find_orphaned_resources(&self) -> Result<OrphanedResources> {
         let mut orphaned = OrphanedResources::default();
 
-        // Find instances
         let resp = self
             .client
             .describe_instances()
@@ -387,7 +361,6 @@ impl Ec2Manager {
             }
         }
 
-        // Find security groups
         let resp = self
             .client
             .describe_security_groups()
@@ -406,7 +379,6 @@ impl Ec2Manager {
             }
         }
 
-        // Find key pairs
         let resp = self
             .client
             .describe_key_pairs()
