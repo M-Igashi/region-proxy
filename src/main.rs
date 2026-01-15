@@ -91,11 +91,7 @@ async fn cmd_start(
     let instance_type = instance_type.or(prefs.default_instance_type);
 
     // Resolve no_system_proxy from CLI flag or preferences
-    let enable_system_proxy = if no_system_proxy {
-        false
-    } else {
-        !prefs.no_system_proxy.unwrap_or(false)
-    };
+    let enable_system_proxy = !no_system_proxy && !prefs.no_system_proxy.unwrap_or(false);
 
     // Check if already running
     if ProxyState::is_running()? {

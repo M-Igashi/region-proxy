@@ -2,6 +2,7 @@ use anyhow::{bail, Context, Result};
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
+use tokio::net::TcpStream;
 use tokio::time::sleep;
 use tracing::{debug, info};
 
@@ -25,7 +26,7 @@ pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16, user: &str
         .arg("-f") // Background
         .arg("-N") // No command
         .arg("-D")
-        .arg(format!("{}", local_port))
+        .arg(local_port.to_string())
         .arg("-o")
         .arg("StrictHostKeyChecking=no")
         .arg("-o")
@@ -62,13 +63,10 @@ pub fn find_ssh_pid(port: u16) -> Result<Option<u32>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Ok(pid) = line.trim().parse::<u32>() {
-            return Ok(Some(pid));
-        }
-    }
-
-    Ok(None)
+    Ok(stdout
+        .lines()
+        .next()
+        .and_then(|line| line.trim().parse::<u32>().ok()))
 }
 
 /// Stop the SSH tunnel by PID
@@ -111,18 +109,12 @@ pub async fn wait_for_tunnel(port: u16) -> Result<()> {
     info!("Waiting for SSH tunnel to be ready...");
 
     for attempt in 1..=30 {
-        let output = Command::new("nc")
-            .arg("-z")
-            .arg("localhost")
-            .arg(port.to_string())
-            .output();
-
-        match output {
-            Ok(o) if o.status.success() => {
+        match TcpStream::connect(("127.0.0.1", port)).await {
+            Ok(_) => {
                 info!("SSH tunnel is ready");
                 return Ok(());
             }
-            _ => {
+            Err(_) => {
                 debug!("Tunnel not ready yet (attempt {}/30)", attempt);
                 sleep(Duration::from_secs(1)).await;
             }

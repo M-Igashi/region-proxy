@@ -44,7 +44,7 @@ impl ProxyState {
 
     pub fn save(&self) -> Result<()> {
         let path = Self::state_file_path()?;
-        let content = serde_json::to_string_pretty(self)?;
+        let content = serde_json::to_string(self)?;
         fs::write(&path, content)?;
         Ok(())
     }
