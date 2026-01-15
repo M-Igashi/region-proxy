@@ -115,6 +115,40 @@ region-proxy cleanup --region ap-northeast-1
 
 ## AWS Setup
 
+### Option 1: Terraform (Recommended)
+
+```bash
+cd terraform
+terraform init
+terraform apply
+
+# Configure AWS CLI with the created credentials
+aws configure
+# Enter the access_key_id and secret_access_key from terraform output
+terraform output -raw secret_access_key
+```
+
+### Option 2: CloudFormation
+
+```bash
+aws cloudformation create-stack \
+  --stack-name region-proxy-iam \
+  --template-body file://cloudformation/region-proxy-iam.yaml \
+  --capabilities CAPABILITY_NAMED_IAM
+
+# Wait for stack creation
+aws cloudformation wait stack-create-complete --stack-name region-proxy-iam
+
+# Get credentials
+aws cloudformation describe-stacks --stack-name region-proxy-iam \
+  --query 'Stacks[0].Outputs'
+
+# Configure AWS CLI with the credentials
+aws configure
+```
+
+### Option 3: Manual Setup
+
 Create an IAM policy with the following permissions:
 
 ```json
