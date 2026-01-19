@@ -1,0 +1,97 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: IAM setup for region-proxy - creates an IAM user with EC2 permissions
+
+Parameters:
+  UserName:
+    Type: String
+    Default: region-proxy-user
+    Description: Name for the IAM user
+
+  CreateAccessKey:
+    Type: String
+    Default: "true"
+    AllowedValues:
+      - "true"
+      - "false"
+    Description: Whether to create an access key for the user
+
+Conditions:
+  ShouldCreateAccessKey:
+    Fn::Equals:
+      - Ref: CreateAccessKey
+      - "true"
+
+Resources:
+  RegionProxyPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: region-proxy-policy
+      Description: Permissions required for region-proxy to manage EC2 instances
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action:
+              - ec2:DescribeImages
+              - ec2:DescribeInstances
+              - ec2:DescribeSecurityGroups
+              - ec2:DescribeKeyPairs
+              - ec2:RunInstances
+              - ec2:TerminateInstances
+              - ec2:CreateSecurityGroup
+              - ec2:DeleteSecurityGroup
+              - ec2:AuthorizeSecurityGroupIngress
+              - ec2:CreateKeyPair
+              - ec2:DeleteKeyPair
+              - ec2:CreateTags
+            Resource: "*"
+
+  RegionProxyUser:
+    Type: AWS::IAM::User
+    Properties:
+      UserName:
+        Ref: UserName
+      ManagedPolicyArns:
+        - Ref: RegionProxyPolicy
+      Tags:
+        - Key: Purpose
+          Value: region-proxy
+
+  RegionProxyAccessKey:
+    Type: AWS::IAM::AccessKey
+    Condition: ShouldCreateAccessKey
+    Properties:
+      UserName:
+        Ref: RegionProxyUser
+
+Outputs:
+  UserName:
+    Description: IAM user name
+    Value:
+      Ref: RegionProxyUser
+
+  UserArn:
+    Description: IAM user ARN
+    Value:
+      Fn::GetAtt:
+        - RegionProxyUser
+        - Arn
+
+  PolicyArn:
+    Description: IAM policy ARN
+    Value:
+      Ref: RegionProxyPolicy
+
+  AccessKeyId:
+    Condition: ShouldCreateAccessKey
+    Description: Access key ID
+    Value:
+      Ref: RegionProxyAccessKey
+
+  SecretAccessKey:
+    Condition: ShouldCreateAccessKey
+    Description: Secret access key
+    Value:
+      Fn::GetAtt:
+        - RegionProxyAccessKey
+        - SecretAccessKey
