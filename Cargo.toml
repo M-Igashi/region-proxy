@@ -8,6 +8,7 @@ license = "MIT"
 repository = "https://github.com/M-Igashi/region-proxy"
 keywords = ["aws", "ec2", "proxy", "socks", "ssh"]
 categories = ["command-line-utilities", "network-programming"]
+exclude = ["CLAUDE.md", ".claude/"]
 
 [dependencies]
 aws-config = { version = "1.5", features = ["behavior-version-latest"] }
