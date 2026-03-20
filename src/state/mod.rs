@@ -51,14 +51,15 @@ impl ProxyState {
 
     pub fn delete() -> Result<()> {
         let path = Self::state_file_path()?;
-        if path.exists() {
-            fs::remove_file(&path)?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e.into()),
         }
-        Ok(())
     }
 
     pub fn is_running() -> Result<bool> {
-        Ok(Self::load()?.is_some())
+        Ok(Self::state_file_path()?.exists())
     }
 }
 

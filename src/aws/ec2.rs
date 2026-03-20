@@ -330,9 +330,7 @@ impl Ec2Manager {
     }
 
     pub async fn find_orphaned_resources(&self) -> Result<OrphanedResources> {
-        let mut orphaned = OrphanedResources::default();
-
-        let resp = self
+        let instances_fut = self
             .client
             .describe_instances()
             .filters(
@@ -350,18 +348,9 @@ impl Ec2Manager {
                     .values("stopped")
                     .build(),
             )
-            .send()
-            .await?;
+            .send();
 
-        for reservation in resp.reservations() {
-            for instance in reservation.instances() {
-                if let Some(id) = instance.instance_id() {
-                    orphaned.instance_ids.push(id.to_string());
-                }
-            }
-        }
-
-        let resp = self
+        let sgs_fut = self
             .client
             .describe_security_groups()
             .filters(
@@ -370,16 +359,9 @@ impl Ec2Manager {
                     .values(RESOURCE_PREFIX)
                     .build(),
             )
-            .send()
-            .await?;
+            .send();
 
-        for sg in resp.security_groups() {
-            if let Some(id) = sg.group_id() {
-                orphaned.security_group_ids.push(id.to_string());
-            }
-        }
-
-        let resp = self
+        let kps_fut = self
             .client
             .describe_key_pairs()
             .filters(
@@ -388,10 +370,31 @@ impl Ec2Manager {
                     .values(RESOURCE_PREFIX)
                     .build(),
             )
-            .send()
-            .await?;
+            .send();
 
-        for kp in resp.key_pairs() {
+        let (instances_resp, sgs_resp, kps_resp) = tokio::try_join!(
+            async { instances_fut.await.context("Failed to describe instances") },
+            async { sgs_fut.await.context("Failed to describe security groups") },
+            async { kps_fut.await.context("Failed to describe key pairs") },
+        )?;
+
+        let mut orphaned = OrphanedResources::default();
+
+        for reservation in instances_resp.reservations() {
+            for instance in reservation.instances() {
+                if let Some(id) = instance.instance_id() {
+                    orphaned.instance_ids.push(id.to_string());
+                }
+            }
+        }
+
+        for sg in sgs_resp.security_groups() {
+            if let Some(id) = sg.group_id() {
+                orphaned.security_group_ids.push(id.to_string());
+            }
+        }
+
+        for kp in kps_resp.key_pairs() {
             if let Some(name) = kp.key_name() {
                 orphaned.key_pair_names.push(name.to_string());
             }

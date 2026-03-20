@@ -43,22 +43,6 @@ impl Preferences {
         Ok(())
     }
 
-    pub fn set_default_region(&mut self, region: Option<String>) {
-        self.default_region = region;
-    }
-
-    pub fn set_default_port(&mut self, port: Option<u16>) {
-        self.default_port = port;
-    }
-
-    pub fn set_default_instance_type(&mut self, instance_type: Option<String>) {
-        self.default_instance_type = instance_type;
-    }
-
-    pub fn set_no_system_proxy(&mut self, no_system_proxy: Option<bool>) {
-        self.no_system_proxy = no_system_proxy;
-    }
-
     pub fn is_empty(&self) -> bool {
         self.default_region.is_none()
             && self.default_port.is_none()
@@ -134,19 +118,19 @@ mod tests {
     }
 
     #[test]
-    fn test_setters() {
+    fn test_field_assignment() {
         let mut prefs = Preferences::default();
 
-        prefs.set_default_region(Some("eu-west-1".to_string()));
+        prefs.default_region = Some("eu-west-1".to_string());
         assert_eq!(prefs.default_region, Some("eu-west-1".to_string()));
 
-        prefs.set_default_port(Some(9999));
+        prefs.default_port = Some(9999);
         assert_eq!(prefs.default_port, Some(9999));
 
-        prefs.set_default_instance_type(Some("t3.micro".to_string()));
+        prefs.default_instance_type = Some("t3.micro".to_string());
         assert_eq!(prefs.default_instance_type, Some("t3.micro".to_string()));
 
-        prefs.set_no_system_proxy(Some(true));
+        prefs.no_system_proxy = Some(true);
         assert_eq!(prefs.no_system_proxy, Some(true));
     }
 

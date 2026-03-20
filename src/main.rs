@@ -452,20 +452,18 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
         }
 
         ConfigAction::SetRegion { region } => {
-            // Validate region
-            if find_region(&region).is_none() {
-                bail!(
+            let region_info = find_region(&region).with_context(|| {
+                format!(
                     "Unknown region: {}. Use 'region-proxy list-regions' to see available regions.",
                     region
-                );
-            }
+                )
+            })?;
 
             let mut prefs = Preferences::load()?;
-            prefs.set_default_region(Some(region.clone()));
+            prefs.default_region = Some(region.clone());
             prefs.save()?;
 
-            let region_name = find_region(&region).map(|r| r.name).unwrap_or("Unknown");
-            println!("✅ Default region set to: {} ({})", region, region_name);
+            println!("✅ Default region set to: {} ({})", region, region_info.name);
         }
 
         ConfigAction::SetPort { port } => {
@@ -474,7 +472,7 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
             }
 
             let mut prefs = Preferences::load()?;
-            prefs.set_default_port(Some(port));
+            prefs.default_port = Some(port);
             prefs.save()?;
 
             println!("✅ Default port set to: {}", port);
@@ -482,7 +480,7 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
 
         ConfigAction::SetInstanceType { instance_type } => {
             let mut prefs = Preferences::load()?;
-            prefs.set_default_instance_type(Some(instance_type.clone()));
+            prefs.default_instance_type = Some(instance_type.clone());
             prefs.save()?;
 
             println!("✅ Default instance type set to: {}", instance_type);
@@ -496,7 +494,7 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
             };
 
             let mut prefs = Preferences::load()?;
-            prefs.set_no_system_proxy(Some(value));
+            prefs.no_system_proxy = Some(value);
             prefs.save()?;
 
             if value {
@@ -511,22 +509,22 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
 
             match option.as_str() {
                 "region" => {
-                    prefs.set_default_region(None);
+                    prefs.default_region = None;
                     prefs.save()?;
                     println!("✅ Default region cleared");
                 }
                 "port" => {
-                    prefs.set_default_port(None);
+                    prefs.default_port = None;
                     prefs.save()?;
                     println!("✅ Default port cleared");
                 }
                 "instance-type" => {
-                    prefs.set_default_instance_type(None);
+                    prefs.default_instance_type = None;
                     prefs.save()?;
                     println!("✅ Default instance type cleared");
                 }
                 "no-system-proxy" => {
-                    prefs.set_no_system_proxy(None);
+                    prefs.no_system_proxy = None;
                     prefs.save()?;
                     println!("✅ System proxy preference cleared");
                 }
