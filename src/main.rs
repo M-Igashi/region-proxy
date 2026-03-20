@@ -463,7 +463,10 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
             prefs.default_region = Some(region.clone());
             prefs.save()?;
 
-            println!("✅ Default region set to: {} ({})", region, region_info.name);
+            println!(
+                "✅ Default region set to: {} ({})",
+                region, region_info.name
+            );
         }
 
         ConfigAction::SetPort { port } => {
