@@ -12,7 +12,8 @@ exclude = ["CLAUDE.md", ".claude/"]
 
 [dependencies]
 aws-config = { version = "1.8", features = ["behavior-version-latest"] }
-aws-sdk-ec2 = "1.221"
+# default-features excludes legacy `rustls` feature that pulls vulnerable rustls-webpki 0.101.x via hyper-rustls 0.24.
+aws-sdk-ec2 = { version = "1.221", default-features = false, features = ["default-https-client", "rt-tokio"] }
 tokio = { version = "1", features = ["full"] }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
