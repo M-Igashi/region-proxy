@@ -6,27 +6,78 @@ pub struct RegionInfo {
 
 pub const REGIONS: &[RegionInfo] = &[
     // Asia Pacific
-    RegionInfo { code: "ap-northeast-1", name: "Tokyo" },
-    RegionInfo { code: "ap-northeast-2", name: "Seoul" },
-    RegionInfo { code: "ap-northeast-3", name: "Osaka" },
-    RegionInfo { code: "ap-southeast-1", name: "Singapore" },
-    RegionInfo { code: "ap-southeast-2", name: "Sydney" },
-    RegionInfo { code: "ap-south-1", name: "Mumbai" },
+    RegionInfo {
+        code: "ap-northeast-1",
+        name: "Tokyo",
+    },
+    RegionInfo {
+        code: "ap-northeast-2",
+        name: "Seoul",
+    },
+    RegionInfo {
+        code: "ap-northeast-3",
+        name: "Osaka",
+    },
+    RegionInfo {
+        code: "ap-southeast-1",
+        name: "Singapore",
+    },
+    RegionInfo {
+        code: "ap-southeast-2",
+        name: "Sydney",
+    },
+    RegionInfo {
+        code: "ap-south-1",
+        name: "Mumbai",
+    },
     // US
-    RegionInfo { code: "us-east-1", name: "N. Virginia" },
-    RegionInfo { code: "us-east-2", name: "Ohio" },
-    RegionInfo { code: "us-west-1", name: "N. California" },
-    RegionInfo { code: "us-west-2", name: "Oregon" },
+    RegionInfo {
+        code: "us-east-1",
+        name: "N. Virginia",
+    },
+    RegionInfo {
+        code: "us-east-2",
+        name: "Ohio",
+    },
+    RegionInfo {
+        code: "us-west-1",
+        name: "N. California",
+    },
+    RegionInfo {
+        code: "us-west-2",
+        name: "Oregon",
+    },
     // Europe
-    RegionInfo { code: "eu-west-1", name: "Ireland" },
-    RegionInfo { code: "eu-west-2", name: "London" },
-    RegionInfo { code: "eu-west-3", name: "Paris" },
-    RegionInfo { code: "eu-central-1", name: "Frankfurt" },
-    RegionInfo { code: "eu-north-1", name: "Stockholm" },
+    RegionInfo {
+        code: "eu-west-1",
+        name: "Ireland",
+    },
+    RegionInfo {
+        code: "eu-west-2",
+        name: "London",
+    },
+    RegionInfo {
+        code: "eu-west-3",
+        name: "Paris",
+    },
+    RegionInfo {
+        code: "eu-central-1",
+        name: "Frankfurt",
+    },
+    RegionInfo {
+        code: "eu-north-1",
+        name: "Stockholm",
+    },
     // South America
-    RegionInfo { code: "sa-east-1", name: "São Paulo" },
+    RegionInfo {
+        code: "sa-east-1",
+        name: "São Paulo",
+    },
     // Canada
-    RegionInfo { code: "ca-central-1", name: "Canada" },
+    RegionInfo {
+        code: "ca-central-1",
+        name: "Canada",
+    },
 ];
 
 impl RegionInfo {
