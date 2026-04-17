@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser)]
 #[command(name = "region-proxy")]
@@ -92,17 +92,28 @@ pub enum ConfigAction {
     /// Set whether to skip system proxy configuration
     SetNoSystemProxy {
         /// true or false
-        value: String,
+        #[arg(action = clap::ArgAction::Set)]
+        value: bool,
     },
 
     /// Clear a specific configuration option
     Unset {
-        /// Option to clear: region, port, instance-type, no-system-proxy
-        option: String,
+        /// Option to clear
+        #[arg(value_enum)]
+        option: UnsetOption,
     },
 
     /// Clear all configuration
     Reset,
+}
+
+#[derive(ValueEnum, Clone, Debug, PartialEq, Eq)]
+#[value(rename_all = "kebab-case")]
+pub enum UnsetOption {
+    Region,
+    Port,
+    InstanceType,
+    NoSystemProxy,
 }
 
 #[cfg(test)]
@@ -311,7 +322,7 @@ mod tests {
         match cli.command {
             Commands::Config { action } => match action {
                 ConfigAction::Unset { option } => {
-                    assert_eq!(option, "region");
+                    assert_eq!(option, UnsetOption::Region);
                 }
                 _ => panic!("Expected Unset action"),
             },

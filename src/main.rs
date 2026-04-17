@@ -7,10 +7,11 @@ mod state;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use clap::Parser;
-use cli::{Cli, Commands, ConfigAction};
+use cli::{Cli, Commands, ConfigAction, UnsetOption};
 use config::{find_region, Preferences, REGIONS};
 use state::ProxyState;
 use std::fs;
+use tokio::task::JoinSet;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
 
@@ -18,7 +19,6 @@ use tracing_subscriber::FmtSubscriber;
 async fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    // Setup logging
     let level = if cli.verbose {
         Level::DEBUG
     } else {
@@ -65,10 +65,8 @@ async fn cmd_start(
     instance_type: Option<String>,
     no_system_proxy: bool,
 ) -> Result<()> {
-    // Load preferences
     let prefs = Preferences::load()?;
 
-    // Resolve region from CLI arg or preferences
     let region = match region {
         Some(r) => r,
         None => match prefs.default_region {
@@ -84,21 +82,14 @@ async fn cmd_start(
         },
     };
 
-    // Resolve port from CLI arg or preferences
     let port = port.or(prefs.default_port).unwrap_or(1080);
-
-    // Resolve instance_type from CLI arg or preferences
     let instance_type = instance_type.or(prefs.default_instance_type);
-
-    // Resolve no_system_proxy from CLI flag or preferences
     let enable_system_proxy = !no_system_proxy && !prefs.no_system_proxy.unwrap_or(false);
 
-    // Check if already running
     if ProxyState::is_running()? {
         bail!("A proxy is already running. Use 'region-proxy stop' first.");
     }
 
-    // Validate region
     let region_info = find_region(&region).with_context(|| {
         format!(
             "Unknown region: {}. Use 'region-proxy list-regions' to see available regions.",
@@ -117,38 +108,30 @@ async fn cmd_start(
     info!("   Instance type: {}", instance_type);
     info!("   Local port: {}", port);
 
-    // Create EC2 manager
     let ec2 = aws::Ec2Manager::new(&region).await?;
 
-    // Find AMI
     info!("📦 Finding latest Amazon Linux 2023 AMI...");
     let ami_id = ec2.find_latest_ami(is_arm).await?;
 
-    // Create security group
     info!("🔒 Creating security group...");
     let sg_id = ec2.create_security_group().await?;
 
-    // Create key pair
     info!("🔑 Creating key pair...");
     let (key_name, private_key) = ec2.create_key_pair().await?;
 
-    // Save key to file
     let keys_dir = ProxyState::keys_dir()?;
     let key_path = keys_dir.join(format!("{}.pem", key_name));
     fs::write(&key_path, &private_key)?;
 
-    // Launch instance
     info!("🖥️  Launching EC2 instance...");
     let instance_id = ec2
         .launch_instance(&ami_id, instance_type, &sg_id, &key_name)
         .await?;
 
-    // Wait for instance
     info!("⏳ Waiting for instance to be ready...");
     let public_ip = match ec2.wait_for_instance(&instance_id).await {
         Ok(ip) => ip,
         Err(e) => {
-            // Cleanup on failure
             error!("Failed to wait for instance: {}", e);
             warn!("Cleaning up resources...");
             let _ = ec2.terminate_instance(&instance_id).await;
@@ -159,20 +142,16 @@ async fn cmd_start(
         }
     };
 
-    // Start SSH tunnel
     info!("🔗 Starting SSH tunnel...");
     let ssh_pid = proxy::start_ssh_tunnel(&public_ip, &key_path, port, "ec2-user")?;
 
-    // Wait for tunnel
     proxy::wait_for_tunnel(port).await?;
 
-    // Enable system proxy
     if enable_system_proxy {
         info!("🌐 Configuring system proxy...");
         proxy::enable_socks_proxy(port)?;
     }
 
-    // Save state
     let state = ProxyState {
         instance_id: instance_id.clone(),
         region: region.to_string(),
@@ -213,7 +192,6 @@ async fn cmd_stop(force: bool) -> Result<()> {
 
     info!("🛑 Stopping proxy...");
 
-    // Disable system proxy
     info!("🌐 Disabling system proxy...");
     if let Err(e) = proxy::disable_socks_proxy() {
         if force {
@@ -223,14 +201,12 @@ async fn cmd_stop(force: bool) -> Result<()> {
         }
     }
 
-    // Stop SSH tunnel
     info!("🔗 Stopping SSH tunnel...");
     if let Some(pid) = state.ssh_pid {
         if let Err(e) = proxy::stop_ssh_tunnel(pid) {
             if force {
                 warn!("Failed to stop SSH tunnel: {}", e);
             } else {
-                // Try by port
                 let _ = proxy::stop_ssh_tunnel_by_port(state.local_port);
             }
         }
@@ -238,7 +214,6 @@ async fn cmd_stop(force: bool) -> Result<()> {
         let _ = proxy::stop_ssh_tunnel_by_port(state.local_port);
     }
 
-    // Terminate EC2 instance
     info!("🖥️  Terminating EC2 instance...");
     let ec2 = aws::Ec2Manager::new(&state.region).await?;
     if let Err(e) = ec2.terminate_instance(&state.instance_id).await {
@@ -249,7 +224,6 @@ async fn cmd_stop(force: bool) -> Result<()> {
         }
     }
 
-    // Delete security group
     info!("🔒 Deleting security group...");
     if let Err(e) = ec2.delete_security_group(&state.security_group_id).await {
         if force {
@@ -259,7 +233,6 @@ async fn cmd_stop(force: bool) -> Result<()> {
         }
     }
 
-    // Delete key pair
     info!("🔑 Deleting key pair...");
     if let Err(e) = ec2.delete_key_pair(&state.key_pair_name).await {
         if force {
@@ -269,12 +242,12 @@ async fn cmd_stop(force: bool) -> Result<()> {
         }
     }
 
-    // Delete local key file
-    if state.key_path.exists() {
-        let _ = fs::remove_file(&state.key_path);
+    match fs::remove_file(&state.key_path) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => warn!("Failed to remove key file: {}", e),
     }
 
-    // Delete state file
     ProxyState::delete()?;
 
     println!();
@@ -362,44 +335,57 @@ async fn cmd_cleanup(region: Option<&str>) -> Result<()> {
         None => REGIONS.iter().map(|r| r.code).collect(),
     };
 
-    let mut total_cleaned = 0;
-
+    let mut set: JoinSet<Result<u32>> = JoinSet::new();
     for region_code in regions {
-        info!("Checking region: {}", region_code);
-        let ec2 = aws::Ec2Manager::new(region_code).await?;
-        let orphaned = ec2.find_orphaned_resources().await?;
-
-        if orphaned.is_empty() {
-            continue;
-        }
-
-        println!("Found orphaned resources in {}:", region_code);
-
-        for id in &orphaned.instance_ids {
-            println!("  Terminating instance: {}", id);
-            if let Err(e) = ec2.terminate_instance(id).await {
-                warn!("Failed to terminate instance {}: {}", id, e);
-            } else {
-                total_cleaned += 1;
+        let region_code = region_code.to_string();
+        set.spawn(async move {
+            info!("Checking region: {}", region_code);
+            let ec2 = aws::Ec2Manager::new(&region_code).await?;
+            let orphaned = ec2.find_orphaned_resources().await?;
+            if orphaned.is_empty() {
+                return Ok(0);
             }
-        }
 
-        for id in &orphaned.security_group_ids {
-            println!("  Deleting security group: {}", id);
-            if let Err(e) = ec2.delete_security_group(id).await {
-                warn!("Failed to delete security group {}: {}", id, e);
-            } else {
-                total_cleaned += 1;
-            }
-        }
+            println!("Found orphaned resources in {}:", region_code);
+            let mut cleaned = 0u32;
 
-        for name in &orphaned.key_pair_names {
-            println!("  Deleting key pair: {}", name);
-            if let Err(e) = ec2.delete_key_pair(name).await {
-                warn!("Failed to delete key pair {}: {}", name, e);
-            } else {
-                total_cleaned += 1;
+            for id in &orphaned.instance_ids {
+                println!("  Terminating instance: {}", id);
+                if let Err(e) = ec2.terminate_instance(id).await {
+                    warn!("Failed to terminate instance {}: {}", id, e);
+                } else {
+                    cleaned += 1;
+                }
             }
+
+            for id in &orphaned.security_group_ids {
+                println!("  Deleting security group: {}", id);
+                if let Err(e) = ec2.delete_security_group(id).await {
+                    warn!("Failed to delete security group {}: {}", id, e);
+                } else {
+                    cleaned += 1;
+                }
+            }
+
+            for name in &orphaned.key_pair_names {
+                println!("  Deleting key pair: {}", name);
+                if let Err(e) = ec2.delete_key_pair(name).await {
+                    warn!("Failed to delete key pair {}: {}", name, e);
+                } else {
+                    cleaned += 1;
+                }
+            }
+
+            Ok(cleaned)
+        });
+    }
+
+    let mut total_cleaned = 0u32;
+    while let Some(res) = set.join_next().await {
+        match res {
+            Ok(Ok(n)) => total_cleaned += n,
+            Ok(Err(e)) => warn!("Region cleanup failed: {}", e),
+            Err(e) => warn!("Task join error: {}", e),
         }
     }
 
@@ -490,12 +476,6 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
         }
 
         ConfigAction::SetNoSystemProxy { value } => {
-            let value = match value.to_lowercase().as_str() {
-                "true" | "1" | "yes" => true,
-                "false" | "0" | "no" => false,
-                _ => bail!("Invalid value: {}. Use 'true' or 'false'", value),
-            };
-
             let mut prefs = Preferences::load()?;
             prefs.no_system_proxy = Some(value);
             prefs.save()?;
@@ -510,43 +490,36 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
         ConfigAction::Unset { option } => {
             let mut prefs = Preferences::load()?;
 
-            match option.as_str() {
-                "region" => {
+            match option {
+                UnsetOption::Region => {
                     prefs.default_region = None;
-                    prefs.save()?;
                     println!("✅ Default region cleared");
                 }
-                "port" => {
+                UnsetOption::Port => {
                     prefs.default_port = None;
-                    prefs.save()?;
                     println!("✅ Default port cleared");
                 }
-                "instance-type" => {
+                UnsetOption::InstanceType => {
                     prefs.default_instance_type = None;
-                    prefs.save()?;
                     println!("✅ Default instance type cleared");
                 }
-                "no-system-proxy" => {
+                UnsetOption::NoSystemProxy => {
                     prefs.no_system_proxy = None;
-                    prefs.save()?;
                     println!("✅ System proxy preference cleared");
                 }
-                _ => {
-                    bail!(
-                        "Unknown option: {}. Valid options: region, port, instance-type, no-system-proxy",
-                        option
-                    );
-                }
             }
+
+            prefs.save()?;
         }
 
         ConfigAction::Reset => {
             let path = Preferences::config_file_path()?;
-            if path.exists() {
-                fs::remove_file(&path)?;
-                println!("✅ Configuration reset to defaults");
-            } else {
-                println!("No configuration file to reset.");
+            match fs::remove_file(&path) {
+                Ok(()) => println!("✅ Configuration reset to defaults"),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    println!("No configuration file to reset.");
+                }
+                Err(e) => return Err(e.into()),
             }
         }
     }

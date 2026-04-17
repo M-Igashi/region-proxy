@@ -1,7 +1,9 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
+
+use crate::state::app_dir;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Preferences {
@@ -20,10 +22,7 @@ pub struct Preferences {
 
 impl Preferences {
     pub fn config_file_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not find home directory")?;
-        let config_dir = home.join(".region-proxy");
-        fs::create_dir_all(&config_dir)?;
-        Ok(config_dir.join("config.json"))
+        Ok(app_dir()?.join("config.json"))
     }
 
     pub fn load() -> Result<Self> {

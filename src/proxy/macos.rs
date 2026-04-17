@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use std::process::Command;
 use tracing::{debug, info};
 
@@ -50,7 +50,7 @@ pub fn enable_socks_proxy(port: u16) -> Result<()> {
         .context("Failed to set SOCKS proxy")?;
 
     if !status.success() {
-        anyhow::bail!("networksetup command failed");
+        bail!("networksetup command failed");
     }
 
     let status = Command::new("networksetup")
@@ -61,7 +61,7 @@ pub fn enable_socks_proxy(port: u16) -> Result<()> {
         .context("Failed to enable SOCKS proxy")?;
 
     if !status.success() {
-        anyhow::bail!("Failed to enable SOCKS proxy state");
+        bail!("Failed to enable SOCKS proxy state");
     }
 
     info!("SOCKS proxy enabled");
@@ -80,7 +80,7 @@ pub fn disable_socks_proxy() -> Result<()> {
         .context("Failed to disable SOCKS proxy")?;
 
     if !status.success() {
-        anyhow::bail!("Failed to disable SOCKS proxy state");
+        bail!("Failed to disable SOCKS proxy state");
     }
 
     info!("SOCKS proxy disabled");

@@ -4,6 +4,13 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
+pub fn app_dir() -> Result<PathBuf> {
+    let home = dirs::home_dir().context("Could not find home directory")?;
+    let dir = home.join(".region-proxy");
+    fs::create_dir_all(&dir)?;
+    Ok(dir)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProxyState {
     pub instance_id: String,
@@ -19,15 +26,11 @@ pub struct ProxyState {
 
 impl ProxyState {
     pub fn state_file_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not find home directory")?;
-        let state_dir = home.join(".region-proxy");
-        fs::create_dir_all(&state_dir)?;
-        Ok(state_dir.join("state.json"))
+        Ok(app_dir()?.join("state.json"))
     }
 
     pub fn keys_dir() -> Result<PathBuf> {
-        let home = dirs::home_dir().context("Could not find home directory")?;
-        let keys_dir = home.join(".region-proxy").join("keys");
+        let keys_dir = app_dir()?.join("keys");
         fs::create_dir_all(&keys_dir)?;
         Ok(keys_dir)
     }

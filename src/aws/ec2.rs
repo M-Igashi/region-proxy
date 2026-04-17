@@ -5,10 +5,25 @@ use aws_sdk_ec2::types::{
 };
 use aws_sdk_ec2::Client;
 use std::time::Duration;
-use tokio::time::sleep;
+use tokio::net::TcpStream;
+use tokio::time::{sleep, timeout};
 use tracing::{debug, info};
 
 const RESOURCE_PREFIX: &str = "region-proxy";
+
+fn created_by_tag() -> Tag {
+    Tag::builder()
+        .key("CreatedBy")
+        .value(RESOURCE_PREFIX)
+        .build()
+}
+
+fn created_by_filter() -> Filter {
+    Filter::builder()
+        .name("tag:CreatedBy")
+        .values(RESOURCE_PREFIX)
+        .build()
+}
 
 pub struct Ec2Manager {
     client: Client,
@@ -45,19 +60,11 @@ impl Ec2Manager {
             .await
             .context("Failed to describe images")?;
 
-        let images = resp.images();
-        if images.is_empty() {
-            bail!("No Amazon Linux 2023 AMI found for architecture {}", arch);
-        }
-
-        let mut images: Vec<_> = images.iter().collect();
-        images.sort_by(|a, b| {
-            b.creation_date()
-                .unwrap_or_default()
-                .cmp(a.creation_date().unwrap_or_default())
-        });
-
-        let ami_id = images[0]
+        let ami_id = resp
+            .images()
+            .iter()
+            .max_by_key(|img| img.creation_date().unwrap_or_default())
+            .with_context(|| format!("No Amazon Linux 2023 AMI found for architecture {}", arch))?
             .image_id()
             .context("AMI has no image ID")?
             .to_string();
@@ -79,12 +86,7 @@ impl Ec2Manager {
                 TagSpecification::builder()
                     .resource_type(ResourceType::SecurityGroup)
                     .tags(Tag::builder().key("Name").value(&group_name).build())
-                    .tags(
-                        Tag::builder()
-                            .key("CreatedBy")
-                            .value(RESOURCE_PREFIX)
-                            .build(),
-                    )
+                    .tags(created_by_tag())
                     .build(),
             )
             .send()
@@ -126,12 +128,7 @@ impl Ec2Manager {
             .tag_specifications(
                 TagSpecification::builder()
                     .resource_type(ResourceType::KeyPair)
-                    .tags(
-                        Tag::builder()
-                            .key("CreatedBy")
-                            .value(RESOURCE_PREFIX)
-                            .build(),
-                    )
+                    .tags(created_by_tag())
                     .build(),
             )
             .send()
@@ -176,12 +173,7 @@ impl Ec2Manager {
                             .value(format!("{}-instance", RESOURCE_PREFIX))
                             .build(),
                     )
-                    .tags(
-                        Tag::builder()
-                            .key("CreatedBy")
-                            .value(RESOURCE_PREFIX)
-                            .build(),
-                    )
+                    .tags(created_by_tag())
                     .build(),
             )
             .send()
@@ -232,8 +224,8 @@ impl Ec2Manager {
             if *state == InstanceStateName::Running {
                 if let Some(ip) = instance.public_ip_address() {
                     info!("Instance is running with IP: {}", ip);
-                    info!("Waiting for SSH to be ready...");
-                    sleep(Duration::from_secs(15)).await;
+                    info!("Waiting for SSH port to open...");
+                    wait_for_ssh_port(ip).await?;
                     return Ok(ip.to_string());
                 }
             }
@@ -333,12 +325,7 @@ impl Ec2Manager {
         let instances_fut = self
             .client
             .describe_instances()
-            .filters(
-                Filter::builder()
-                    .name("tag:CreatedBy")
-                    .values(RESOURCE_PREFIX)
-                    .build(),
-            )
+            .filters(created_by_filter())
             .filters(
                 Filter::builder()
                     .name("instance-state-name")
@@ -353,23 +340,13 @@ impl Ec2Manager {
         let sgs_fut = self
             .client
             .describe_security_groups()
-            .filters(
-                Filter::builder()
-                    .name("tag:CreatedBy")
-                    .values(RESOURCE_PREFIX)
-                    .build(),
-            )
+            .filters(created_by_filter())
             .send();
 
         let kps_fut = self
             .client
             .describe_key_pairs()
-            .filters(
-                Filter::builder()
-                    .name("tag:CreatedBy")
-                    .values(RESOURCE_PREFIX)
-                    .build(),
-            )
+            .filters(created_by_filter())
             .send();
 
         let (instances_resp, sgs_resp, kps_resp) = tokio::try_join!(
@@ -417,4 +394,17 @@ impl OrphanedResources {
             && self.security_group_ids.is_empty()
             && self.key_pair_names.is_empty()
     }
+}
+
+async fn wait_for_ssh_port(host: &str) -> Result<()> {
+    for attempt in 1..=60 {
+        match timeout(Duration::from_secs(2), TcpStream::connect((host, 22))).await {
+            Ok(Ok(_)) => {
+                debug!("SSH port open on attempt {}", attempt);
+                return Ok(());
+            }
+            _ => sleep(Duration::from_millis(500)).await,
+        }
+    }
+    bail!("Timeout waiting for SSH port on {}", host);
 }
