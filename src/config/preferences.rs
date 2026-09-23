@@ -1,11 +1,10 @@
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::PathBuf;
 
-use crate::state::app_dir;
+use crate::store::{app_dir, load_json, remove_file_if_exists, save_json};
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Preferences {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub default_region: Option<String>,
@@ -26,20 +25,18 @@ impl Preferences {
     }
 
     pub fn load() -> Result<Self> {
-        let path = Self::config_file_path()?;
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = fs::read_to_string(&path)?;
-        let prefs: Self = serde_json::from_str(&content)?;
-        Ok(prefs)
+        Ok(load_json(&Self::config_file_path()?)?.unwrap_or_default())
     }
 
-    pub fn save(&self) -> Result<()> {
-        let path = Self::config_file_path()?;
-        let content = serde_json::to_string_pretty(self)?;
-        fs::write(&path, content)?;
-        Ok(())
+    pub fn update(f: impl FnOnce(&mut Self)) -> Result<()> {
+        let mut prefs = Self::load()?;
+        f(&mut prefs);
+        save_json(&Self::config_file_path()?, &prefs)
+    }
+
+    /// Returns true if a config file existed and was removed.
+    pub fn delete() -> Result<bool> {
+        remove_file_if_exists(&Self::config_file_path()?)
     }
 
     pub fn is_empty(&self) -> bool {
@@ -96,9 +93,7 @@ mod tests {
     fn test_serialize_partial_preferences() {
         let prefs = Preferences {
             default_region: Some("us-west-2".to_string()),
-            default_port: None,
-            default_instance_type: None,
-            no_system_proxy: None,
+            ..Default::default()
         };
 
         let json = serde_json::to_string_pretty(&prefs).unwrap();
@@ -114,23 +109,6 @@ mod tests {
 
         prefs.default_region = Some("ap-northeast-1".to_string());
         assert!(!prefs.is_empty());
-    }
-
-    #[test]
-    fn test_field_assignment() {
-        let mut prefs = Preferences::default();
-
-        prefs.default_region = Some("eu-west-1".to_string());
-        assert_eq!(prefs.default_region, Some("eu-west-1".to_string()));
-
-        prefs.default_port = Some(9999);
-        assert_eq!(prefs.default_port, Some(9999));
-
-        prefs.default_instance_type = Some("t3.micro".to_string());
-        assert_eq!(prefs.default_instance_type, Some("t3.micro".to_string()));
-
-        prefs.no_system_proxy = Some(true);
-        assert_eq!(prefs.no_system_proxy, Some(true));
     }
 
     #[test]

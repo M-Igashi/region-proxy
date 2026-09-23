@@ -1,4 +1,8 @@
-#[derive(Debug, Clone)]
+use anyhow::{Context, Result};
+
+pub const DEFAULT_INSTANCE_TYPE: &str = "t4g.nano";
+
+#[derive(Debug)]
 pub struct RegionInfo {
     pub code: &'static str,
     pub name: &'static str,
@@ -80,14 +84,21 @@ pub const REGIONS: &[RegionInfo] = &[
     },
 ];
 
-impl RegionInfo {
-    pub fn default_instance_type(&self) -> &'static str {
-        "t4g.nano"
-    }
-}
-
 pub fn find_region(code: &str) -> Option<&'static RegionInfo> {
     REGIONS.iter().find(|r| r.code == code)
+}
+
+pub fn require_region(code: &str) -> Result<&'static RegionInfo> {
+    find_region(code).with_context(|| {
+        format!(
+            "Unknown region: {}. Use 'region-proxy list-regions' to see available regions.",
+            code
+        )
+    })
+}
+
+pub fn region_name(code: &str) -> &'static str {
+    find_region(code).map(|r| r.name).unwrap_or("Unknown")
 }
 
 #[cfg(test)]
@@ -119,9 +130,16 @@ mod tests {
     }
 
     #[test]
-    fn test_default_instance_type_arm() {
-        let region = find_region("ap-northeast-1").unwrap();
-        assert_eq!(region.default_instance_type(), "t4g.nano");
+    fn test_require_region() {
+        assert_eq!(require_region("eu-west-1").unwrap().name, "Ireland");
+        let err = require_region("nope").unwrap_err().to_string();
+        assert!(err.contains("Unknown region: nope"));
+    }
+
+    #[test]
+    fn test_region_name() {
+        assert_eq!(region_name("ap-northeast-1"), "Tokyo");
+        assert_eq!(region_name("nope"), "Unknown");
     }
 
     #[test]

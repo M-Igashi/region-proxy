@@ -1,101 +1,72 @@
 use anyhow::{bail, Context, Result};
 use std::process::Command;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
-fn get_active_network_service() -> Result<String> {
+fn networksetup(args: &[&str]) -> Result<String> {
     let output = Command::new("networksetup")
-        .arg("-listallnetworkservices")
+        .args(args)
         .output()
-        .context("Failed to list network services")?;
+        .context("Failed to run networksetup")?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    if !output.status.success() {
+        bail!(
+            "networksetup {} failed: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
 
-    let preferred_services = [
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+fn active_network_service() -> Result<String> {
+    let services = networksetup(&["-listallnetworkservices"])?;
+
+    for service in [
         "Wi-Fi",
         "Ethernet",
         "USB 10/100/1000 LAN",
         "Thunderbolt Ethernet",
-    ];
-
-    for service in preferred_services {
-        if stdout.contains(service) {
-            let status = Command::new("networksetup")
-                .arg("-getinfo")
-                .arg(service)
-                .output();
-
-            if let Ok(status_output) = status {
-                let status_str = String::from_utf8_lossy(&status_output.stdout);
-                if status_str.contains("IP address:") && !status_str.contains("IP address: none") {
-                    debug!("Found active network service: {}", service);
-                    return Ok(service.to_string());
-                }
-            }
+    ] {
+        if !services.lines().any(|line| line == service) {
+            continue;
+        }
+        let Ok(info) = networksetup(&["-getinfo", service]) else {
+            continue;
+        };
+        let has_ip = info
+            .lines()
+            .any(|line| line.starts_with("IP address:") && !line.ends_with("none"));
+        if has_ip {
+            debug!("Found active network service: {}", service);
+            return Ok(service.to_string());
         }
     }
 
+    warn!("Could not detect active network service, falling back to Wi-Fi");
     Ok("Wi-Fi".to_string())
 }
 
-pub fn enable_socks_proxy(port: u16) -> Result<()> {
-    let service = get_active_network_service()?;
+/// Enable the SOCKS proxy on the active network service and return its name
+pub fn enable_socks_proxy(port: u16) -> Result<String> {
+    let service = active_network_service()?;
     info!("Enabling SOCKS proxy on {} (localhost:{})", service, port);
 
-    let status = Command::new("networksetup")
-        .arg("-setsocksfirewallproxy")
-        .arg(&service)
-        .arg("localhost")
-        .arg(port.to_string())
-        .status()
-        .context("Failed to set SOCKS proxy")?;
-
-    if !status.success() {
-        bail!("networksetup command failed");
-    }
-
-    let status = Command::new("networksetup")
-        .arg("-setsocksfirewallproxystate")
-        .arg(&service)
-        .arg("on")
-        .status()
-        .context("Failed to enable SOCKS proxy")?;
-
-    if !status.success() {
-        bail!("Failed to enable SOCKS proxy state");
-    }
+    let port = port.to_string();
+    networksetup(&["-setsocksfirewallproxy", &service, "localhost", &port])?;
+    networksetup(&["-setsocksfirewallproxystate", &service, "on"])?;
 
     info!("SOCKS proxy enabled");
-    Ok(())
+    Ok(service)
 }
 
-pub fn disable_socks_proxy() -> Result<()> {
-    let service = get_active_network_service()?;
+pub fn disable_socks_proxy(service: &str) -> Result<()> {
     info!("Disabling SOCKS proxy on {}", service);
-
-    let status = Command::new("networksetup")
-        .arg("-setsocksfirewallproxystate")
-        .arg(&service)
-        .arg("off")
-        .status()
-        .context("Failed to disable SOCKS proxy")?;
-
-    if !status.success() {
-        bail!("Failed to disable SOCKS proxy state");
-    }
-
+    networksetup(&["-setsocksfirewallproxystate", service, "off"])?;
     info!("SOCKS proxy disabled");
     Ok(())
 }
 
-pub fn is_socks_proxy_enabled() -> Result<bool> {
-    let service = get_active_network_service()?;
-
-    let output = Command::new("networksetup")
-        .arg("-getsocksfirewallproxy")
-        .arg(&service)
-        .output()
-        .context("Failed to get SOCKS proxy status")?;
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.contains("Enabled: Yes"))
+pub fn is_socks_proxy_enabled(service: &str) -> Result<bool> {
+    Ok(networksetup(&["-getsocksfirewallproxy", service])?.contains("Enabled: Yes"))
 }

@@ -1,17 +1,14 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
-pub fn app_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not find home directory")?;
-    let dir = home.join(".region-proxy");
-    fs::create_dir_all(&dir)?;
-    Ok(dir)
-}
+use crate::store::{app_dir, load_json, remove_file_if_exists, save_json};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ProxyState {
     pub instance_id: String,
     pub region: String,
@@ -20,7 +17,7 @@ pub struct ProxyState {
     pub key_pair_name: String,
     pub key_path: PathBuf,
     pub local_port: u16,
-    pub ssh_pid: Option<u32>,
+    pub system_proxy_service: Option<String>,
     pub started_at: DateTime<Utc>,
 }
 
@@ -29,40 +26,31 @@ impl ProxyState {
         Ok(app_dir()?.join("state.json"))
     }
 
-    pub fn keys_dir() -> Result<PathBuf> {
+    pub fn write_private_key(key_name: &str, material: &str) -> Result<PathBuf> {
         let keys_dir = app_dir()?.join("keys");
         fs::create_dir_all(&keys_dir)?;
-        Ok(keys_dir)
+        let path = keys_dir.join(format!("{}.pem", key_name));
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&path)?
+            .write_all(material.as_bytes())?;
+        Ok(path)
     }
 
     pub fn load() -> Result<Option<Self>> {
-        let path = Self::state_file_path()?;
-        if !path.exists() {
-            return Ok(None);
-        }
-        let content = fs::read_to_string(&path)?;
-        let state: Self = serde_json::from_str(&content)?;
-        Ok(Some(state))
+        load_json(&Self::state_file_path()?)
     }
 
     pub fn save(&self) -> Result<()> {
-        let path = Self::state_file_path()?;
-        let content = serde_json::to_string(self)?;
-        fs::write(&path, content)?;
-        Ok(())
+        save_json(&Self::state_file_path()?, self)
     }
 
     pub fn delete() -> Result<()> {
-        let path = Self::state_file_path()?;
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e.into()),
-        }
-    }
-
-    pub fn is_running() -> Result<bool> {
-        Ok(Self::state_file_path()?.exists())
+        remove_file_if_exists(&Self::state_file_path()?)?;
+        Ok(())
     }
 }
 
@@ -80,7 +68,7 @@ mod tests {
             key_pair_name: "region-proxy-test-key".to_string(),
             key_path: PathBuf::from("/tmp/test-key.pem"),
             local_port: 1080,
-            ssh_pid: Some(12345),
+            system_proxy_service: Some("Wi-Fi".to_string()),
             started_at: Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap(),
         }
     }
@@ -98,30 +86,18 @@ mod tests {
         assert_eq!(state.key_pair_name, deserialized.key_pair_name);
         assert_eq!(state.key_path, deserialized.key_path);
         assert_eq!(state.local_port, deserialized.local_port);
-        assert_eq!(state.ssh_pid, deserialized.ssh_pid);
+        assert_eq!(
+            state.system_proxy_service,
+            deserialized.system_proxy_service
+        );
         assert_eq!(state.started_at, deserialized.started_at);
     }
 
     #[test]
-    fn test_serialize_without_ssh_pid() {
-        let mut state = create_test_state();
-        state.ssh_pid = None;
-
-        let json = serde_json::to_string(&state).unwrap();
-        let deserialized: ProxyState = serde_json::from_str(&json).unwrap();
-
-        assert!(deserialized.ssh_pid.is_none());
-    }
-
-    #[test]
-    fn test_json_format() {
-        let state = create_test_state();
-        let json = serde_json::to_string_pretty(&state).unwrap();
-
-        assert!(json.contains("instance_id"));
-        assert!(json.contains("i-1234567890abcdef0"));
-        assert!(json.contains("region"));
-        assert!(json.contains("ap-northeast-1"));
+    fn test_deserialize_legacy_state_without_service() {
+        let json = r#"{"instance_id":"i-1","region":"us-west-2","public_ip":"1.2.3.4","security_group_id":"sg-1","key_pair_name":"k","key_path":"/tmp/k.pem","local_port":1080,"ssh_pid":123,"started_at":"2024-01-15T10:30:00Z"}"#;
+        let state: ProxyState = serde_json::from_str(json).unwrap();
+        assert!(state.system_proxy_service.is_none());
     }
 
     #[test]
@@ -129,12 +105,5 @@ mod tests {
         let path = ProxyState::state_file_path().unwrap();
         assert!(path.to_string_lossy().contains(".region-proxy"));
         assert!(path.to_string_lossy().ends_with("state.json"));
-    }
-
-    #[test]
-    fn test_keys_dir() {
-        let path = ProxyState::keys_dir().unwrap();
-        assert!(path.to_string_lossy().contains(".region-proxy"));
-        assert!(path.to_string_lossy().ends_with("keys"));
     }
 }

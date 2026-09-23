@@ -26,7 +26,7 @@ pub enum Commands {
         #[arg(short, long)]
         port: Option<u16>,
 
-        /// EC2 instance type (default: t4g.nano for ARM regions, t3.nano otherwise)
+        /// EC2 instance type (default: t4g.nano)
         #[arg(short, long)]
         instance_type: Option<String>,
 
@@ -47,7 +47,7 @@ pub enum Commands {
 
     /// List available AWS regions
     ListRegions {
-        /// Show only regions with description
+        /// Show regions in a table
         #[arg(short, long)]
         detailed: bool,
     },
@@ -107,7 +107,7 @@ pub enum ConfigAction {
     Reset,
 }
 
-#[derive(ValueEnum, Clone, Debug, PartialEq, Eq)]
+#[derive(ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
 #[value(rename_all = "kebab-case")]
 pub enum UnsetOption {
     Region,

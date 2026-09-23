@@ -1,26 +1,43 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
+use aws_config::SdkConfig;
+use aws_sdk_ec2::client::Waiters;
+use aws_sdk_ec2::config::Region;
+use aws_sdk_ec2::error::ProvideErrorMetadata;
 use aws_sdk_ec2::types::{
-    Filter, InstanceStateName, InstanceType, IpPermission, IpRange, ResourceType, Tag,
-    TagSpecification,
+    Filter, InstanceType, IpPermission, IpRange, ResourceType, Tag, TagSpecification,
 };
 use aws_sdk_ec2::Client;
 use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 use tracing::{debug, info};
 
 const RESOURCE_PREFIX: &str = "region-proxy";
+const CREATED_BY_TAG: &str = "CreatedBy";
+
+pub async fn load_config(region: &str) -> SdkConfig {
+    aws_config::defaults(aws_config::BehaviorVersion::latest())
+        .region(Region::new(region.to_string()))
+        .load()
+        .await
+}
+
+/// Graviton families have a `g` right after the generation number (t4g, m7gd, c7gn, ...)
+pub fn is_arm_instance_type(instance_type: &str) -> bool {
+    let family = instance_type.split('.').next().unwrap_or_default();
+    let mut chars = family.chars().skip_while(|c| !c.is_ascii_digit());
+    chars.find(|c| !c.is_ascii_digit()) == Some('g')
+}
 
 fn created_by_tag() -> Tag {
     Tag::builder()
-        .key("CreatedBy")
+        .key(CREATED_BY_TAG)
         .value(RESOURCE_PREFIX)
         .build()
 }
 
 fn created_by_filter() -> Filter {
     Filter::builder()
-        .name("tag:CreatedBy")
+        .name(format!("tag:{}", CREATED_BY_TAG))
         .values(RESOURCE_PREFIX)
         .build()
 }
@@ -30,14 +47,13 @@ pub struct Ec2Manager {
 }
 
 impl Ec2Manager {
-    pub async fn new(region: &str) -> Result<Self> {
-        let config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-            .region(aws_sdk_ec2::config::Region::new(region.to_string()))
-            .load()
-            .await;
-
-        let client = Client::new(&config);
-        Ok(Self { client })
+    pub fn new(config: &SdkConfig, region: &str) -> Self {
+        let conf = aws_sdk_ec2::config::Builder::from(config)
+            .region(Region::new(region.to_string()))
+            .build();
+        Self {
+            client: Client::from_conf(conf),
+        }
     }
 
     pub async fn find_latest_ami(&self, arm: bool) -> Result<String> {
@@ -55,7 +71,6 @@ impl Ec2Manager {
                     .build(),
             )
             .filters(Filter::builder().name("state").values("available").build())
-            .filters(Filter::builder().name("architecture").values(arch).build())
             .send()
             .await
             .context("Failed to describe images")?;
@@ -153,13 +168,11 @@ impl Ec2Manager {
     ) -> Result<String> {
         info!("Launching instance: type={}, ami={}", instance_type, ami_id);
 
-        let instance_type = InstanceType::from(instance_type);
-
         let resp = self
             .client
             .run_instances()
             .image_id(ami_id)
-            .instance_type(instance_type)
+            .instance_type(InstanceType::from(instance_type))
             .min_count(1)
             .max_count(1)
             .security_group_ids(security_group_id)
@@ -192,119 +205,89 @@ impl Ec2Manager {
         Ok(instance_id)
     }
 
+    /// Wait until the instance is running and return its public IP
     pub async fn wait_for_instance(&self, instance_id: &str) -> Result<String> {
         info!("Waiting for instance {} to be running...", instance_id);
 
-        let max_attempts = 60;
-        for attempt in 1..=max_attempts {
-            let resp = self
-                .client
-                .describe_instances()
-                .instance_ids(instance_id)
-                .send()
-                .await
-                .context("Failed to describe instance")?;
+        let resp = self
+            .client
+            .wait_until_instance_running()
+            .instance_ids(instance_id)
+            .wait(Duration::from_secs(300))
+            .await
+            .context("Instance did not reach running state")?
+            .into_result()
+            .context("Failed to describe instance")?;
 
-            let instance = resp
-                .reservations()
-                .first()
-                .and_then(|r| r.instances().first())
-                .context("Instance not found")?;
+        let ip = resp
+            .reservations()
+            .first()
+            .and_then(|r| r.instances().first())
+            .and_then(|i| i.public_ip_address())
+            .context("Instance has no public IP")?
+            .to_string();
 
-            let state = instance
-                .state()
-                .and_then(|s| s.name())
-                .unwrap_or(&InstanceStateName::Pending);
-
-            debug!(
-                "Instance state: {:?} (attempt {}/{})",
-                state, attempt, max_attempts
-            );
-
-            if *state == InstanceStateName::Running {
-                if let Some(ip) = instance.public_ip_address() {
-                    info!("Instance is running with IP: {}", ip);
-                    info!("Waiting for SSH port to open...");
-                    wait_for_ssh_port(ip).await?;
-                    return Ok(ip.to_string());
-                }
-            }
-
-            if *state == InstanceStateName::Terminated || *state == InstanceStateName::ShuttingDown
-            {
-                bail!("Instance terminated unexpectedly");
-            }
-
-            sleep(Duration::from_secs(5)).await;
-        }
-
-        bail!("Timeout waiting for instance to be running");
+        info!("Instance is running with IP: {}", ip);
+        Ok(ip)
     }
 
-    pub async fn terminate_instance(&self, instance_id: &str) -> Result<()> {
-        info!("Terminating instance: {}", instance_id);
+    pub async fn terminate_instances(&self, instance_ids: &[String]) -> Result<()> {
+        info!("Terminating instance(s): {}", instance_ids.join(", "));
 
         self.client
             .terminate_instances()
-            .instance_ids(instance_id)
+            .set_instance_ids(Some(instance_ids.to_vec()))
             .send()
             .await
-            .context("Failed to terminate instance")?;
+            .context("Failed to terminate instances")?;
 
-        let max_attempts = 30;
-        for _ in 1..=max_attempts {
-            let resp = self
-                .client
-                .describe_instances()
-                .instance_ids(instance_id)
-                .send()
-                .await?;
+        self.client
+            .wait_until_instance_terminated()
+            .set_instance_ids(Some(instance_ids.to_vec()))
+            .wait(Duration::from_secs(180))
+            .await
+            .context("Timeout waiting for instance termination")?;
 
-            let state = resp
-                .reservations()
-                .first()
-                .and_then(|r| r.instances().first())
-                .and_then(|i| i.state())
-                .and_then(|s| s.name());
-
-            if state == Some(&InstanceStateName::Terminated) {
-                info!("Instance terminated");
-                return Ok(());
-            }
-
-            sleep(Duration::from_secs(2)).await;
-        }
-
+        info!("Instance(s) terminated");
         Ok(())
     }
 
     pub async fn delete_security_group(&self, group_id: &str) -> Result<()> {
         info!("Deleting security group: {}", group_id);
 
-        for attempt in 1..=5 {
-            match self
+        const MAX_ATTEMPTS: u32 = 5;
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            let result = self
                 .client
                 .delete_security_group()
                 .group_id(group_id)
                 .send()
-                .await
-            {
-                Ok(_) => {
-                    info!("Deleted security group");
+                .await;
+
+            let Err(e) = result else {
+                info!("Deleted security group");
+                return Ok(());
+            };
+
+            let code = e
+                .as_service_error()
+                .and_then(|s| s.code())
+                .unwrap_or_default()
+                .to_string();
+            match code.as_str() {
+                "InvalidGroup.NotFound" => {
+                    info!("Security group already deleted");
                     return Ok(());
                 }
-                Err(e) => {
-                    if attempt < 5 {
-                        debug!("Retrying security group deletion: {}", e);
-                        sleep(Duration::from_secs(5)).await;
-                    } else {
-                        return Err(e).context("Failed to delete security group");
-                    }
+                "DependencyViolation" if attempt < MAX_ATTEMPTS => {
+                    debug!("Security group still in use, retrying: {}", e);
+                    sleep(Duration::from_secs(5)).await;
                 }
+                _ => return Err(e).context("Failed to delete security group"),
             }
         }
-
-        Ok(())
     }
 
     pub async fn delete_key_pair(&self, key_name: &str) -> Result<()> {
@@ -355,29 +338,27 @@ impl Ec2Manager {
             async { kps_fut.await.context("Failed to describe key pairs") },
         )?;
 
-        let mut orphaned = OrphanedResources::default();
-
-        for reservation in instances_resp.reservations() {
-            for instance in reservation.instances() {
-                if let Some(id) = instance.instance_id() {
-                    orphaned.instance_ids.push(id.to_string());
-                }
-            }
-        }
-
-        for sg in sgs_resp.security_groups() {
-            if let Some(id) = sg.group_id() {
-                orphaned.security_group_ids.push(id.to_string());
-            }
-        }
-
-        for kp in kps_resp.key_pairs() {
-            if let Some(name) = kp.key_name() {
-                orphaned.key_pair_names.push(name.to_string());
-            }
-        }
-
-        Ok(orphaned)
+        Ok(OrphanedResources {
+            instance_ids: instances_resp
+                .reservations()
+                .iter()
+                .flat_map(|r| r.instances())
+                .filter_map(|i| i.instance_id())
+                .map(str::to_string)
+                .collect(),
+            security_group_ids: sgs_resp
+                .security_groups()
+                .iter()
+                .filter_map(|sg| sg.group_id())
+                .map(str::to_string)
+                .collect(),
+            key_pair_names: kps_resp
+                .key_pairs()
+                .iter()
+                .filter_map(|kp| kp.key_name())
+                .map(str::to_string)
+                .collect(),
+        })
     }
 }
 
@@ -396,15 +377,30 @@ impl OrphanedResources {
     }
 }
 
-async fn wait_for_ssh_port(host: &str) -> Result<()> {
-    for attempt in 1..=60 {
-        match timeout(Duration::from_secs(2), TcpStream::connect((host, 22))).await {
-            Ok(Ok(_)) => {
-                debug!("SSH port open on attempt {}", attempt);
-                return Ok(());
-            }
-            _ => sleep(Duration::from_millis(500)).await,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_arm_instance_type() {
+        for arm in [
+            "t4g.nano",
+            "m7g.large",
+            "c7gn.medium",
+            "m6gd.xlarge",
+            "x2gd.large",
+        ] {
+            assert!(is_arm_instance_type(arm), "{}", arm);
+        }
+        for x86 in [
+            "t3.nano",
+            "t3a.micro",
+            "m7i.large",
+            "g4dn.xlarge",
+            "c5n.large",
+            "",
+        ] {
+            assert!(!is_arm_instance_type(x86), "{}", x86);
         }
     }
-    bail!("Timeout waiting for SSH port on {}", host);
 }
