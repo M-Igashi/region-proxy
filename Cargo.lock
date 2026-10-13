@@ -1535,7 +1535,7 @@ checksum = "cab834c73d247e67f4fae452806d17d3c7501756d98c8808d7c9c7aa7d18f973"
 
 [[package]]
 name = "region-proxy"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "aws-config",
