@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
 
-pub const DEFAULT_INSTANCE_TYPE: &str = "t4g.nano";
-
 #[derive(Debug)]
 pub struct RegionInfo {
     pub code: &'static str,
@@ -84,7 +82,7 @@ pub const REGIONS: &[RegionInfo] = &[
     },
 ];
 
-pub fn find_region(code: &str) -> Option<&'static RegionInfo> {
+fn find_region(code: &str) -> Option<&'static RegionInfo> {
     REGIONS.iter().find(|r| r.code == code)
 }
 
@@ -104,30 +102,6 @@ pub fn region_name(code: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_find_region_tokyo() {
-        let region = find_region("ap-northeast-1").unwrap();
-        assert_eq!(region.code, "ap-northeast-1");
-        assert_eq!(region.name, "Tokyo");
-    }
-
-    #[test]
-    fn test_find_region_oregon() {
-        let region = find_region("us-west-2").unwrap();
-        assert_eq!(region.code, "us-west-2");
-        assert_eq!(region.name, "Oregon");
-    }
-
-    #[test]
-    fn test_find_region_invalid() {
-        assert!(find_region("invalid-region").is_none());
-    }
-
-    #[test]
-    fn test_find_region_empty() {
-        assert!(find_region("").is_none());
-    }
 
     #[test]
     fn test_require_region() {

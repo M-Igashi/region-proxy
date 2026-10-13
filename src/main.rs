@@ -9,8 +9,11 @@ use anyhow::{bail, Result};
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use cli::{Cli, Commands, ConfigAction, UnsetOption};
-use config::{region_name, require_region, Preferences, DEFAULT_INSTANCE_TYPE, REGIONS};
+use config::{
+    region_name, require_region, Preferences, DEFAULT_INSTANCE_TYPE, DEFAULT_PORT, REGIONS,
+};
 use state::ProxyState;
+use std::net::TcpStream;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::FmtSubscriber;
@@ -67,7 +70,7 @@ async fn cmd_start(
         ),
     };
 
-    let port = port.or(prefs.default_port).unwrap_or(1080);
+    let port = port.or(prefs.default_port).unwrap_or(DEFAULT_PORT);
     let instance_type = instance_type
         .or(prefs.default_instance_type)
         .unwrap_or_else(|| DEFAULT_INSTANCE_TYPE.to_string());
@@ -78,54 +81,23 @@ async fn cmd_start(
     }
 
     let region_info = require_region(&region)?;
+    if TcpStream::connect(("127.0.0.1", port)).is_ok() {
+        bail!("Local port {} is already in use", port);
+    }
 
     info!("🚀 Starting proxy in {} ({})", region_info.name, region);
     info!("   Instance type: {}", instance_type);
     info!("   Local port: {}", port);
 
     let ec2 = aws::Ec2Manager::new(&aws::load_config(&region).await, &region);
-
-    info!("📦 Finding latest Amazon Linux 2023 AMI...");
-    let ami_id = ec2
-        .find_latest_ami(aws::is_arm_instance_type(&instance_type))
-        .await?;
-
-    info!("🔒 Creating security group...");
-    let sg_id = ec2.create_security_group().await?;
-
-    info!("🔑 Creating key pair...");
-    let (key_name, private_key) = ec2.create_key_pair().await?;
-    let key_path = ProxyState::write_private_key(&key_name, &private_key)?;
-
-    info!("🖥️  Launching EC2 instance...");
-    let instance_id = match ec2
-        .launch_instance(&ami_id, &instance_type, &sg_id, &key_name)
-        .await
-    {
-        Ok(id) => id,
-        Err(e) => {
-            warn!("Cleaning up resources...");
-            tolerate(true, ec2.delete_security_group(&sg_id).await)?;
-            tolerate(true, ec2.delete_key_pair(&key_name).await)?;
-            tolerate(true, store::remove_file_if_exists(&key_path).map(drop))?;
-            return Err(e);
-        }
-    };
-
     let mut state = ProxyState {
-        instance_id,
         region,
-        public_ip: String::new(),
-        security_group_id: sg_id,
-        key_pair_name: key_name,
-        key_path,
         local_port: port,
-        system_proxy_service: None,
         started_at: Utc::now(),
+        ..Default::default()
     };
-    state.save()?;
 
-    if let Err(e) = connect(&ec2, &mut state, enable_system_proxy).await {
+    if let Err(e) = provision(&ec2, &mut state, &instance_type, enable_system_proxy).await {
         error!("Failed to establish proxy: {:#}", e);
         warn!("Cleaning up resources...");
         release_resources(&ec2, &state, true).await?;
@@ -145,18 +117,36 @@ async fn cmd_start(
     Ok(())
 }
 
-/// Bring up the tunnel for an already launched instance, persisting progress to state
-async fn connect(
+/// Create the AWS resources and bring up the tunnel, recording each resource in `state`
+/// as soon as it exists so that a failure at any step can be cleaned up
+async fn provision(
     ec2: &aws::Ec2Manager,
     state: &mut ProxyState,
+    instance_type: &str,
     enable_system_proxy: bool,
 ) -> Result<()> {
+    info!("🔒 Creating security group...");
+    state.security_group_id = ec2.create_security_group().await?;
+    ec2.allow_ssh(&state.security_group_id).await?;
+
+    info!("🔑 Creating key pair...");
+    let (key_name, private_key) = ec2.create_key_pair().await?;
+    state.key_pair_name = key_name;
+    state.key_path = store::write_private_key(&state.key_pair_name, &private_key)?;
+
+    info!("🖥️  Launching EC2 instance...");
+    state.instance_id = ec2
+        .launch_instance(
+            instance_type,
+            &state.security_group_id,
+            &state.key_pair_name,
+        )
+        .await?;
+    state.save()?;
+
     info!("⏳ Waiting for instance to be ready...");
     state.public_ip = ec2.wait_for_instance(&state.instance_id).await?;
     state.save()?;
-
-    info!("   Waiting for SSH port to open...");
-    proxy::wait_for_port(&state.public_ip, proxy::SSH_PORT).await?;
 
     info!("🔗 Starting SSH tunnel...");
     proxy::start_ssh_tunnel(&state.public_ip, &state.key_path, state.local_port)?;
@@ -180,21 +170,27 @@ async fn release_resources(ec2: &aws::Ec2Manager, state: &ProxyState, force: boo
     info!("🔗 Stopping SSH tunnel...");
     tolerate(force, proxy::stop_ssh_tunnel(state.local_port))?;
 
-    info!("🖥️  Terminating EC2 instance...");
-    tolerate(
-        force,
-        ec2.terminate_instances(std::slice::from_ref(&state.instance_id))
-            .await,
-    )?;
+    if !state.instance_id.is_empty() {
+        info!("🖥️  Terminating EC2 instance...");
+        tolerate(
+            force,
+            ec2.terminate_instances(std::slice::from_ref(&state.instance_id))
+                .await,
+        )?;
+    }
 
-    info!("🔒 Deleting security group...");
-    tolerate(
-        force,
-        ec2.delete_security_group(&state.security_group_id).await,
-    )?;
+    if !state.key_pair_name.is_empty() {
+        info!("🔑 Deleting key pair...");
+        tolerate(force, ec2.delete_key_pair(&state.key_pair_name).await)?;
+    }
 
-    info!("🔑 Deleting key pair...");
-    tolerate(force, ec2.delete_key_pair(&state.key_pair_name).await)?;
+    if !state.security_group_id.is_empty() {
+        info!("🔒 Deleting security group...");
+        tolerate(
+            force,
+            ec2.delete_security_group(&state.security_group_id).await,
+        )?;
+    }
 
     tolerate(
         true,
@@ -303,6 +299,10 @@ fn cmd_list_regions(detailed: bool) {
 }
 
 async fn cmd_cleanup(region: Option<&str>) -> Result<()> {
+    if ProxyState::load()?.is_some() {
+        bail!("A proxy is running. Use 'region-proxy stop' first.");
+    }
+
     let regions: Vec<&'static str> = match region {
         Some(r) => vec![require_region(r)?.code],
         None => REGIONS.iter().map(|r| r.code).collect(),
@@ -355,19 +355,19 @@ async fn cleanup_region(ec2: aws::Ec2Manager, region_code: &'static str) -> Resu
         }
     }
 
-    for id in &orphaned.security_group_ids {
-        println!("  Deleting security group: {}", id);
-        match ec2.delete_security_group(id).await {
-            Ok(()) => cleaned += 1,
-            Err(e) => warn!("Failed to delete security group {}: {:#}", id, e),
-        }
-    }
-
     for name in &orphaned.key_pair_names {
         println!("  Deleting key pair: {}", name);
         match ec2.delete_key_pair(name).await {
             Ok(()) => cleaned += 1,
             Err(e) => warn!("Failed to delete key pair {}: {:#}", name, e),
+        }
+    }
+
+    for id in &orphaned.security_group_ids {
+        println!("  Deleting security group: {}", id);
+        match ec2.delete_security_group(id).await {
+            Ok(()) => cleaned += 1,
+            Err(e) => warn!("Failed to delete security group {}: {:#}", id, e),
         }
     }
 
@@ -422,9 +422,6 @@ fn cmd_config(action: ConfigAction) -> Result<()> {
         }
 
         ConfigAction::SetPort { port } => {
-            if port == 0 {
-                bail!("Port must be greater than 0");
-            }
             Preferences::update(|p| p.default_port = Some(port))?;
             println!("✅ Default port set to: {}", port);
         }

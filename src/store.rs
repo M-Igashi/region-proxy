@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{ErrorKind, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub fn app_dir() -> Result<PathBuf> {
@@ -22,6 +23,20 @@ pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
 pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     fs::write(path, serde_json::to_string_pretty(value)?)?;
     Ok(())
+}
+
+pub fn write_private_key(key_name: &str, material: &str) -> Result<PathBuf> {
+    let keys_dir = app_dir()?.join("keys");
+    fs::create_dir_all(&keys_dir)?;
+    let path = keys_dir.join(format!("{}.pem", key_name));
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&path)?
+        .write_all(material.as_bytes())?;
+    Ok(path)
 }
 
 /// Returns true if a file was removed, false if it did not exist.

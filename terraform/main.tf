@@ -33,7 +33,6 @@ resource "aws_iam_policy" "region_proxy" {
       {
         Effect = "Allow"
         Action = [
-          "ec2:DescribeImages",
           "ec2:DescribeInstances",
           "ec2:DescribeSecurityGroups",
           "ec2:DescribeKeyPairs",
@@ -47,6 +46,12 @@ resource "aws_iam_policy" "region_proxy" {
           "ec2:CreateTags"
         ]
         Resource = "*"
+      },
+      {
+        # RunInstances resolves the latest Amazon Linux 2023 AMI from this AWS public parameter
+        Effect   = "Allow"
+        Action   = "ssm:GetParameters"
+        Resource = "arn:aws:ssm:*::parameter/aws/service/ami-amazon-linux-latest/*"
       }
     ]
   })

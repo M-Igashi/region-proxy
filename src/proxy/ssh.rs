@@ -1,21 +1,16 @@
 use anyhow::{bail, Context, Result};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
 use std::path::Path;
 use std::process::{Command, Stdio};
-use std::time::Duration;
-use tokio::net::TcpStream;
-use tokio::time::{sleep, timeout};
-use tracing::{debug, info};
+use tracing::debug;
 
-pub const SSH_PORT: u16 = 22;
 const SSH_USER: &str = "ec2-user";
 
 /// Start SSH dynamic forwarding in the background.
-/// `ssh -f` returns once authentication and the local forward succeed, so a
-/// successful exit status means the tunnel is up.
+/// ssh retries the connection while the instance boots (`ConnectionAttempts`), and
+/// `-f` returns once authentication and the local forward succeed, so a successful
+/// exit status means the tunnel is up.
 pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16) -> Result<()> {
-    info!(
+    debug!(
         "Starting SSH tunnel to {}@{} on port {}",
         SSH_USER, host, local_port
     );
@@ -24,6 +19,10 @@ pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16) -> Result<
         .args(["-f", "-N", "-D"])
         .arg(local_port.to_string())
         .args([
+            "-o",
+            "ConnectTimeout=5",
+            "-o",
+            "ConnectionAttempts=60",
             "-o",
             "ExitOnForwardFailure=yes",
             "-o",
@@ -48,14 +47,14 @@ pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16) -> Result<
         bail!("SSH failed to establish tunnel ({})", status);
     }
 
-    info!("SSH tunnel is ready");
+    debug!("SSH tunnel is ready");
     Ok(())
 }
 
-/// Find the process listening on the given local port
+/// Find the ssh process listening on the given local port
 pub fn find_ssh_pid(port: u16) -> Result<Option<u32>> {
     let output = Command::new("lsof")
-        .args(["-nP", "-t", "-sTCP:LISTEN"])
+        .args(["-a", "-c", "ssh", "-nP", "-t", "-sTCP:LISTEN"])
         .arg(format!("-iTCP:{}", port))
         .output()
         .context("Failed to run lsof")?;
@@ -67,31 +66,18 @@ pub fn find_ssh_pid(port: u16) -> Result<Option<u32>> {
 
 /// Stop the SSH tunnel listening on the given local port
 pub fn stop_ssh_tunnel(port: u16) -> Result<()> {
-    match find_ssh_pid(port)? {
-        Some(pid) => {
-            info!("Stopping SSH tunnel (PID: {})", pid);
-            kill(Pid::from_raw(pid as i32), Signal::SIGTERM)
-                .context("Failed to send SIGTERM to SSH process")?;
-        }
-        None => debug!("No SSH process found on port {}", port),
+    let Some(pid) = find_ssh_pid(port)? else {
+        debug!("No SSH process found on port {}", port);
+        return Ok(());
+    };
+
+    debug!("Stopping SSH tunnel (PID: {})", pid);
+    let status = Command::new("kill")
+        .arg(pid.to_string())
+        .status()
+        .context("Failed to run kill")?;
+    if !status.success() {
+        bail!("Failed to stop SSH process {}", pid);
     }
     Ok(())
-}
-
-/// Wait until a TCP port on the given host accepts connections
-pub async fn wait_for_port(host: &str, port: u16) -> Result<()> {
-    const MAX_ATTEMPTS: u32 = 60;
-    for attempt in 1..=MAX_ATTEMPTS {
-        if timeout(Duration::from_secs(2), TcpStream::connect((host, port)))
-            .await
-            .is_ok_and(|r| r.is_ok())
-        {
-            debug!("Port {} open on {} (attempt {})", port, host, attempt);
-            return Ok(());
-        }
-        if attempt < MAX_ATTEMPTS {
-            sleep(Duration::from_millis(500)).await;
-        }
-    }
-    bail!("Timeout waiting for port {} on {}", port, host);
 }

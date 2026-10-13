@@ -4,6 +4,9 @@ use std::path::PathBuf;
 
 use crate::store::{app_dir, load_json, remove_file_if_exists, save_json};
 
+pub const DEFAULT_PORT: u16 = 1080;
+pub const DEFAULT_INSTANCE_TYPE: &str = "t4g.nano";
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Preferences {
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -22,10 +22,23 @@ pub async fn load_config(region: &str) -> SdkConfig {
 }
 
 /// Graviton families have a `g` right after the generation number (t4g, m7gd, c7gn, ...)
-pub fn is_arm_instance_type(instance_type: &str) -> bool {
+fn is_arm_instance_type(instance_type: &str) -> bool {
     let family = instance_type.split('.').next().unwrap_or_default();
     let mut chars = family.chars().skip_while(|c| !c.is_ascii_digit());
     chars.find(|c| !c.is_ascii_digit()) == Some('g')
+}
+
+/// EC2 resolves the latest Amazon Linux 2023 AMI from the AWS public SSM parameter at launch
+fn latest_ami(instance_type: &str) -> String {
+    let arch = if is_arm_instance_type(instance_type) {
+        "arm64"
+    } else {
+        "x86_64"
+    };
+    format!(
+        "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-{}",
+        arch
+    )
 }
 
 fn created_by_tag() -> Tag {
@@ -56,41 +69,9 @@ impl Ec2Manager {
         }
     }
 
-    pub async fn find_latest_ami(&self, arm: bool) -> Result<String> {
-        let arch = if arm { "arm64" } else { "x86_64" };
-        info!("Finding latest Amazon Linux 2023 AMI for {}", arch);
-
-        let resp = self
-            .client
-            .describe_images()
-            .owners("amazon")
-            .filters(
-                Filter::builder()
-                    .name("name")
-                    .values(format!("al2023-ami-2023.*-{}", arch))
-                    .build(),
-            )
-            .filters(Filter::builder().name("state").values("available").build())
-            .send()
-            .await
-            .context("Failed to describe images")?;
-
-        let ami_id = resp
-            .images()
-            .iter()
-            .max_by_key(|img| img.creation_date().unwrap_or_default())
-            .with_context(|| format!("No Amazon Linux 2023 AMI found for architecture {}", arch))?
-            .image_id()
-            .context("AMI has no image ID")?
-            .to_string();
-
-        info!("Found AMI: {}", ami_id);
-        Ok(ami_id)
-    }
-
     pub async fn create_security_group(&self) -> Result<String> {
         let group_name = format!("{}-{}", RESOURCE_PREFIX, uuid::Uuid::new_v4());
-        info!("Creating security group: {}", group_name);
+        debug!("Creating security group: {}", group_name);
 
         let resp = self
             .client
@@ -113,9 +94,14 @@ impl Ec2Manager {
             .context("Security group has no ID")?
             .to_string();
 
+        debug!("Created security group: {}", group_id);
+        Ok(group_id)
+    }
+
+    pub async fn allow_ssh(&self, group_id: &str) -> Result<()> {
         self.client
             .authorize_security_group_ingress()
-            .group_id(&group_id)
+            .group_id(group_id)
             .ip_permissions(
                 IpPermission::builder()
                     .ip_protocol("tcp")
@@ -128,13 +114,12 @@ impl Ec2Manager {
             .await
             .context("Failed to add SSH ingress rule")?;
 
-        info!("Created security group: {}", group_id);
-        Ok(group_id)
+        Ok(())
     }
 
     pub async fn create_key_pair(&self) -> Result<(String, String)> {
         let key_name = format!("{}-{}", RESOURCE_PREFIX, uuid::Uuid::new_v4());
-        info!("Creating key pair: {}", key_name);
+        debug!("Creating key pair: {}", key_name);
 
         let resp = self
             .client
@@ -155,23 +140,26 @@ impl Ec2Manager {
             .context("Key pair has no private key")?
             .to_string();
 
-        info!("Created key pair: {}", key_name);
+        debug!("Created key pair: {}", key_name);
         Ok((key_name, private_key))
     }
 
     pub async fn launch_instance(
         &self,
-        ami_id: &str,
         instance_type: &str,
         security_group_id: &str,
         key_name: &str,
     ) -> Result<String> {
-        info!("Launching instance: type={}, ami={}", instance_type, ami_id);
+        let image_id = latest_ami(instance_type);
+        debug!(
+            "Launching instance: type={}, image={}",
+            instance_type, image_id
+        );
 
-        let resp = self
+        let result = self
             .client
             .run_instances()
-            .image_id(ami_id)
+            .image_id(image_id)
             .instance_type(InstanceType::from(instance_type))
             .min_count(1)
             .max_count(1)
@@ -190,24 +178,35 @@ impl Ec2Manager {
                     .build(),
             )
             .send()
-            .await
-            .context("Failed to launch instance")?;
+            .await;
 
-        let instance_id = resp
-            .instances()
-            .first()
-            .context("No instance returned")?
+        let resp = match result {
+            Err(e) if e.code() == Some("SsmAccessDenied") => {
+                return Err(e).context(
+                    "Missing ssm:GetParameters permission to look up the AMI. \
+                     Update your IAM policy: https://github.com/M-Igashi/region-proxy#upgrading-from-v130-or-earlier",
+                );
+            }
+            other => other.context("Failed to launch instance")?,
+        };
+
+        let instance = resp.instances().first().context("No instance returned")?;
+        let instance_id = instance
             .instance_id()
             .context("Instance has no ID")?
             .to_string();
 
-        info!("Launched instance: {}", instance_id);
+        debug!(
+            "Launched instance: {} (AMI {})",
+            instance_id,
+            instance.image_id().unwrap_or("unknown")
+        );
         Ok(instance_id)
     }
 
     /// Wait until the instance is running and return its public IP
     pub async fn wait_for_instance(&self, instance_id: &str) -> Result<String> {
-        info!("Waiting for instance {} to be running...", instance_id);
+        debug!("Waiting for instance {} to be running...", instance_id);
 
         let resp = self
             .client
@@ -227,12 +226,13 @@ impl Ec2Manager {
             .context("Instance has no public IP")?
             .to_string();
 
-        info!("Instance is running with IP: {}", ip);
+        debug!("Instance is running with IP: {}", ip);
         Ok(ip)
     }
 
+    /// Request termination without waiting; `delete_security_group` retries until the instance is gone
     pub async fn terminate_instances(&self, instance_ids: &[String]) -> Result<()> {
-        info!("Terminating instance(s): {}", instance_ids.join(", "));
+        debug!("Terminating instance(s): {}", instance_ids.join(", "));
 
         self.client
             .terminate_instances()
@@ -241,21 +241,13 @@ impl Ec2Manager {
             .await
             .context("Failed to terminate instances")?;
 
-        self.client
-            .wait_until_instance_terminated()
-            .set_instance_ids(Some(instance_ids.to_vec()))
-            .wait(Duration::from_secs(180))
-            .await
-            .context("Timeout waiting for instance termination")?;
-
-        info!("Instance(s) terminated");
         Ok(())
     }
 
     pub async fn delete_security_group(&self, group_id: &str) -> Result<()> {
-        info!("Deleting security group: {}", group_id);
+        debug!("Deleting security group: {}", group_id);
 
-        const MAX_ATTEMPTS: u32 = 5;
+        const MAX_ATTEMPTS: u32 = 36; // ~3 min at 5s intervals
         let mut attempt = 0;
         loop {
             attempt += 1;
@@ -267,21 +259,16 @@ impl Ec2Manager {
                 .await;
 
             let Err(e) = result else {
-                info!("Deleted security group");
+                debug!("Deleted security group");
                 return Ok(());
             };
 
-            let code = e
-                .as_service_error()
-                .and_then(|s| s.code())
-                .unwrap_or_default()
-                .to_string();
-            match code.as_str() {
-                "InvalidGroup.NotFound" => {
+            match e.code() {
+                Some("InvalidGroup.NotFound") => {
                     info!("Security group already deleted");
                     return Ok(());
                 }
-                "DependencyViolation" if attempt < MAX_ATTEMPTS => {
+                Some("DependencyViolation") if attempt < MAX_ATTEMPTS => {
                     debug!("Security group still in use, retrying: {}", e);
                     sleep(Duration::from_secs(5)).await;
                 }
@@ -291,7 +278,7 @@ impl Ec2Manager {
     }
 
     pub async fn delete_key_pair(&self, key_name: &str) -> Result<()> {
-        info!("Deleting key pair: {}", key_name);
+        debug!("Deleting key pair: {}", key_name);
 
         self.client
             .delete_key_pair()
@@ -300,7 +287,7 @@ impl Ec2Manager {
             .await
             .context("Failed to delete key pair")?;
 
-        info!("Deleted key pair");
+        debug!("Deleted key pair");
         Ok(())
     }
 
@@ -362,7 +349,6 @@ impl Ec2Manager {
     }
 }
 
-#[derive(Debug, Default)]
 pub struct OrphanedResources {
     pub instance_ids: Vec<String>,
     pub security_group_ids: Vec<String>,

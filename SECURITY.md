@@ -4,8 +4,8 @@
 
 | Version | Supported          |
 | ------- | ------------------ |
-| 1.2.x   | :white_check_mark: |
-| < 1.2   | :x:                |
+| 2.0.x   | :white_check_mark: |
+| < 2.0   | :x:                |
 
 Only the latest release is supported with security updates.
 

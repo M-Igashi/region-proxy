@@ -46,7 +46,7 @@ That's it! After the initial setup, just run `region-proxy start` and `region-pr
 ## Prerequisites
 
 - macOS
-- AWS account with EC2 permissions
+- AWS account with the IAM permissions listed in [AWS Setup](#aws-setup)
 - AWS CLI configured (`aws configure`)
 
 ## Installation
@@ -158,7 +158,6 @@ Create an IAM policy with the following permissions:
         {
             "Effect": "Allow",
             "Action": [
-                "ec2:DescribeImages",
                 "ec2:DescribeInstances",
                 "ec2:DescribeSecurityGroups",
                 "ec2:DescribeKeyPairs",
@@ -172,10 +171,17 @@ Create an IAM policy with the following permissions:
                 "ec2:CreateTags"
             ],
             "Resource": "*"
+        },
+        {
+            "Effect": "Allow",
+            "Action": "ssm:GetParameters",
+            "Resource": "arn:aws:ssm:*::parameter/aws/service/ami-amazon-linux-latest/*"
         }
     ]
 }
 ```
+
+`ssm:GetParameters` is limited to the AWS public parameters that point to the latest Amazon Linux AMIs. EC2 reads them when launching the instance.
 
 Then configure AWS CLI:
 
@@ -183,11 +189,31 @@ Then configure AWS CLI:
 aws configure
 ```
 
+### Upgrading from v1.3.0 or earlier
+
+Since v2.0.0, region-proxy looks up the AMI through an AWS public SSM parameter instead of `ec2:DescribeImages`, so the IAM policy needs `ssm:GetParameters`. Without it, `region-proxy start` fails with `SsmAccessDenied` and no instance is launched. Update the policy you created:
+
+```bash
+# Terraform
+cd terraform
+terraform apply
+
+# CloudFormation (keep the existing parameter values, otherwise the IAM user is recreated with defaults)
+aws cloudformation update-stack \
+  --stack-name region-proxy-iam \
+  --template-body file://cloudformation/region-proxy-iam.yaml \
+  --capabilities CAPABILITY_NAMED_IAM \
+  --parameters ParameterKey=UserName,UsePreviousValue=true ParameterKey=CreateAccessKey,UsePreviousValue=true
+aws cloudformation wait stack-update-complete --stack-name region-proxy-iam
+```
+
+For a manually created policy, add the `ssm:GetParameters` statement shown above. The access key and the IAM user stay the same in all three cases. The updated policy no longer includes `ec2:DescribeImages`, which v1.3.0 and earlier need, so upgrade the CLI (`brew upgrade region-proxy`) at the same time.
+
 ## How it works
 
-1. Creates a minimal EC2 instance (t4g.nano) with Amazon Linux 2023
-2. Creates a temporary security group allowing SSH access
-3. Generates a temporary SSH key pair
+1. Creates a temporary security group allowing SSH access
+2. Generates a temporary SSH key pair
+3. Launches a minimal EC2 instance (t4g.nano) with the latest Amazon Linux 2023 AMI, resolved by EC2 from the AWS public SSM parameter
 4. Establishes an SSH tunnel with dynamic port forwarding
 5. Optionally configures macOS system proxy
 
@@ -200,6 +226,10 @@ When you stop the proxy, all resources are automatically cleaned up.
 ```bash
 aws sts get-caller-identity
 ```
+
+**SsmAccessDenied / not authorized to perform ssm:GetParameters**
+
+The IAM policy predates v2.0.0. See [Upgrading from v1.3.0 or earlier](#upgrading-from-v130-or-earlier).
 
 **No region specified**
 

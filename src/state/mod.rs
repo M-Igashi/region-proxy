@@ -1,14 +1,12 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs;
-use std::io::Write;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 
 use crate::store::{app_dir, load_json, remove_file_if_exists, save_json};
 
-#[derive(Debug, Serialize, Deserialize)]
+/// Resource fields stay empty until the resource is created
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ProxyState {
     pub instance_id: String,
     pub region: String,
@@ -22,22 +20,8 @@ pub struct ProxyState {
 }
 
 impl ProxyState {
-    pub fn state_file_path() -> Result<PathBuf> {
+    fn state_file_path() -> Result<PathBuf> {
         Ok(app_dir()?.join("state.json"))
-    }
-
-    pub fn write_private_key(key_name: &str, material: &str) -> Result<PathBuf> {
-        let keys_dir = app_dir()?.join("keys");
-        fs::create_dir_all(&keys_dir)?;
-        let path = keys_dir.join(format!("{}.pem", key_name));
-        fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)?
-            .write_all(material.as_bytes())?;
-        Ok(path)
     }
 
     pub fn load() -> Result<Option<Self>> {
