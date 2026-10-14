@@ -16,7 +16,7 @@ use state::ProxyState;
 use std::net::TcpStream;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn, Level};
-use tracing_subscriber::FmtSubscriber;
+use tracing_subscriber::{filter::Targets, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -27,10 +27,14 @@ async fn main() -> Result<()> {
     } else {
         Level::INFO
     };
-    FmtSubscriber::builder()
-        .with_max_level(level)
-        .with_target(false)
-        .without_time()
+    // Dependencies such as the AWS SDK log credential details at INFO, so only warnings pass through
+    tracing_subscriber::registry()
+        .with(fmt::layer().with_target(false).without_time())
+        .with(
+            Targets::new()
+                .with_target("region_proxy", level)
+                .with_default(Level::WARN),
+        )
         .init();
 
     match cli.command {
