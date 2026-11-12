@@ -14,7 +14,9 @@ pub fn app_dir() -> Result<PathBuf> {
 
 pub fn load_json<T: DeserializeOwned>(path: &Path) -> Result<Option<T>> {
     match fs::read_to_string(path) {
-        Ok(content) => Ok(Some(serde_json::from_str(&content)?)),
+        Ok(content) => serde_json::from_str(&content)
+            .map(Some)
+            .with_context(|| format!("Failed to parse {}", path.display())),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
     }

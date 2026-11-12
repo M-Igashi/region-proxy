@@ -5,7 +5,7 @@ mod proxy;
 mod state;
 mod store;
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, Result};
 use chrono::Utc;
 use clap::{Parser, ValueEnum};
 use cli::{Cli, Commands, ConfigAction, UnsetOption};
@@ -14,6 +14,7 @@ use config::{
 };
 use state::ProxyState;
 use std::net::TcpStream;
+use tokio::signal::ctrl_c;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn, Level};
 use tracing_subscriber::{filter::Targets, fmt, prelude::*};
@@ -101,10 +102,19 @@ async fn cmd_start(
         ..Default::default()
     };
 
-    if let Err(e) = provision(&ec2, &mut state, &instance_type, enable_system_proxy).await {
+    let result = tokio::select! {
+        r = provision(&ec2, &mut state, &instance_type, enable_system_proxy) => r,
+        _ = ctrl_c() => Err(anyhow!("Interrupted")),
+    };
+    if let Err(e) = result {
         error!("Failed to establish proxy: {:#}", e);
         warn!("Cleaning up resources...");
-        release_resources(&ec2, &state, true).await?;
+        tokio::select! {
+            r = release_resources(&ec2, &state, true) => r?,
+            _ = ctrl_c() => bail!(
+                "Cleanup interrupted. Run 'region-proxy stop --force' and then 'region-proxy cleanup' to finish it."
+            ),
+        }
         return Err(e);
     }
 
@@ -131,12 +141,15 @@ async fn provision(
 ) -> Result<()> {
     info!("🔒 Creating security group...");
     state.security_group_id = ec2.create_security_group().await?;
+    state.save()?;
     ec2.allow_ssh(&state.security_group_id).await?;
 
     info!("🔑 Creating key pair...");
     let (key_name, private_key) = ec2.create_key_pair().await?;
     state.key_pair_name = key_name;
+    state.save()?;
     state.key_path = store::write_private_key(&state.key_pair_name, &private_key)?;
+    state.save()?;
 
     info!("🖥️  Launching EC2 instance...");
     state.instance_id = ec2

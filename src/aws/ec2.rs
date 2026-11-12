@@ -21,9 +21,13 @@ pub async fn load_config(region: &str) -> SdkConfig {
         .await
 }
 
-/// Graviton families have a `g` right after the generation number (t4g, m7gd, c7gn, ...)
+/// Graviton families have a `g` right after the generation number (t4g, m7gd, c7gn, ...),
+/// except for the first generation, `a1`
 fn is_arm_instance_type(instance_type: &str) -> bool {
     let family = instance_type.split('.').next().unwrap_or_default();
+    if family == "a1" {
+        return true;
+    }
     let mut chars = family.chars().skip_while(|c| !c.is_ascii_digit());
     chars.find(|c| !c.is_ascii_digit()) == Some('g')
 }
@@ -234,14 +238,20 @@ impl Ec2Manager {
     pub async fn terminate_instances(&self, instance_ids: &[String]) -> Result<()> {
         debug!("Terminating instance(s): {}", instance_ids.join(", "));
 
-        self.client
+        let result = self
+            .client
             .terminate_instances()
             .set_instance_ids(Some(instance_ids.to_vec()))
             .send()
-            .await
-            .context("Failed to terminate instances")?;
+            .await;
 
-        Ok(())
+        match result {
+            Err(e) if e.code() == Some("InvalidInstanceID.NotFound") => {
+                info!("Instance already terminated");
+                Ok(())
+            }
+            other => other.map(drop).context("Failed to terminate instances"),
+        }
     }
 
     pub async fn delete_security_group(&self, group_id: &str) -> Result<()> {
@@ -375,6 +385,7 @@ mod tests {
             "c7gn.medium",
             "m6gd.xlarge",
             "x2gd.large",
+            "a1.medium",
         ] {
             assert!(is_arm_instance_type(arm), "{}", arm);
         }
