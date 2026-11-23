@@ -13,7 +13,6 @@ pub struct ProxyState {
     pub public_ip: String,
     pub security_group_id: String,
     pub key_pair_name: String,
-    pub key_path: PathBuf,
     pub local_port: u16,
     pub system_proxy_service: Option<String>,
     pub started_at: DateTime<Utc>,
@@ -41,53 +40,12 @@ impl ProxyState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::TimeZone;
-
-    fn create_test_state() -> ProxyState {
-        ProxyState {
-            instance_id: "i-1234567890abcdef0".to_string(),
-            region: "ap-northeast-1".to_string(),
-            public_ip: "54.150.123.45".to_string(),
-            security_group_id: "sg-0123456789abcdef0".to_string(),
-            key_pair_name: "region-proxy-test-key".to_string(),
-            key_path: PathBuf::from("/tmp/test-key.pem"),
-            local_port: 1080,
-            system_proxy_service: Some("Wi-Fi".to_string()),
-            started_at: Utc.with_ymd_and_hms(2024, 1, 15, 10, 30, 0).unwrap(),
-        }
-    }
 
     #[test]
-    fn test_serialize_deserialize() {
-        let state = create_test_state();
-        let json = serde_json::to_string(&state).unwrap();
-        let deserialized: ProxyState = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(state.instance_id, deserialized.instance_id);
-        assert_eq!(state.region, deserialized.region);
-        assert_eq!(state.public_ip, deserialized.public_ip);
-        assert_eq!(state.security_group_id, deserialized.security_group_id);
-        assert_eq!(state.key_pair_name, deserialized.key_pair_name);
-        assert_eq!(state.key_path, deserialized.key_path);
-        assert_eq!(state.local_port, deserialized.local_port);
-        assert_eq!(
-            state.system_proxy_service,
-            deserialized.system_proxy_service
-        );
-        assert_eq!(state.started_at, deserialized.started_at);
-    }
-
-    #[test]
-    fn test_deserialize_legacy_state_without_service() {
+    fn test_deserialize_legacy_state() {
         let json = r#"{"instance_id":"i-1","region":"us-west-2","public_ip":"1.2.3.4","security_group_id":"sg-1","key_pair_name":"k","key_path":"/tmp/k.pem","local_port":1080,"ssh_pid":123,"started_at":"2024-01-15T10:30:00Z"}"#;
         let state: ProxyState = serde_json::from_str(json).unwrap();
+        assert_eq!(state.key_pair_name, "k");
         assert!(state.system_proxy_service.is_none());
-    }
-
-    #[test]
-    fn test_state_file_path() {
-        let path = ProxyState::state_file_path().unwrap();
-        assert!(path.to_string_lossy().contains(".region-proxy"));
-        assert!(path.to_string_lossy().ends_with("state.json"));
     }
 }

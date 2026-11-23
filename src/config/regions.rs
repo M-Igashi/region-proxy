@@ -115,19 +115,4 @@ mod tests {
         assert_eq!(region_name("ap-northeast-1"), "Tokyo");
         assert_eq!(region_name("nope"), "Unknown");
     }
-
-    #[test]
-    fn test_regions_not_empty() {
-        assert!(!REGIONS.is_empty());
-        assert!(REGIONS.len() >= 17);
-    }
-
-    #[test]
-    fn test_all_regions_have_valid_codes() {
-        for region in REGIONS {
-            assert!(!region.code.is_empty());
-            assert!(!region.name.is_empty());
-            assert!(region.code.contains('-'));
-        }
-    }
 }

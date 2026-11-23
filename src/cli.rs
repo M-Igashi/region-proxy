@@ -22,11 +22,11 @@ pub enum Commands {
         #[arg(short, long)]
         region: Option<String>,
 
-        /// Local port for SOCKS proxy (default: 1080)
+        /// Local port for SOCKS proxy (default: config value, else 1080)
         #[arg(short, long, value_parser = clap::value_parser!(u16).range(1..))]
         port: Option<u16>,
 
-        /// EC2 instance type (default: t4g.nano)
+        /// EC2 instance type (default: config value, else t4g.nano)
         #[arg(short, long)]
         instance_type: Option<String>,
 

@@ -104,7 +104,10 @@ async fn cmd_start(
 
     let result = tokio::select! {
         r = provision(&ec2, &mut state, &instance_type, enable_system_proxy) => r,
-        _ = ctrl_c() => Err(anyhow!("Interrupted")),
+        _ = ctrl_c() => Err(anyhow!(
+            "Interrupted. If an instance was being launched, run 'region-proxy cleanup --region {}'",
+            state.region
+        )),
     };
     if let Err(e) = result {
         error!("Failed to establish proxy: {:#}", e);
@@ -148,8 +151,7 @@ async fn provision(
     let (key_name, private_key) = ec2.create_key_pair().await?;
     state.key_pair_name = key_name;
     state.save()?;
-    state.key_path = store::write_private_key(&state.key_pair_name, &private_key)?;
-    state.save()?;
+    let key_path = store::write_private_key(&state.key_pair_name, &private_key)?;
 
     info!("🖥️  Launching EC2 instance...");
     state.instance_id = ec2
@@ -166,7 +168,7 @@ async fn provision(
     state.save()?;
 
     info!("🔗 Starting SSH tunnel...");
-    proxy::start_ssh_tunnel(&state.public_ip, &state.key_path, state.local_port)?;
+    proxy::start_ssh_tunnel(&state.public_ip, &key_path, state.local_port).await?;
 
     if enable_system_proxy {
         info!("🌐 Configuring system proxy...");
@@ -199,6 +201,8 @@ async fn release_resources(ec2: &aws::Ec2Manager, state: &ProxyState, force: boo
     if !state.key_pair_name.is_empty() {
         info!("🔑 Deleting key pair...");
         tolerate(force, ec2.delete_key_pair(&state.key_pair_name).await)?;
+        let key_path = store::key_path(&state.key_pair_name)?;
+        tolerate(force, store::remove_file_if_exists(&key_path).map(drop))?;
     }
 
     if !state.security_group_id.is_empty() {
@@ -209,10 +213,6 @@ async fn release_resources(ec2: &aws::Ec2Manager, state: &ProxyState, force: boo
         )?;
     }
 
-    tolerate(
-        true,
-        store::remove_file_if_exists(&state.key_path).map(drop),
-    )?;
     ProxyState::delete()
 }
 

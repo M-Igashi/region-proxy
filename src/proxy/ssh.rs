@@ -9,13 +9,13 @@ const SSH_USER: &str = "ec2-user";
 /// ssh retries the connection while the instance boots (`ConnectionAttempts`), and
 /// `-f` returns once authentication and the local forward succeed, so a successful
 /// exit status means the tunnel is up.
-pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16) -> Result<()> {
+pub async fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16) -> Result<()> {
     debug!(
         "Starting SSH tunnel to {}@{} on port {}",
         SSH_USER, host, local_port
     );
 
-    let status = Command::new("ssh")
+    let status = tokio::process::Command::new("ssh")
         .args(["-f", "-N", "-D"])
         .arg(local_port.to_string())
         .args([
@@ -40,7 +40,9 @@ pub fn start_ssh_tunnel(host: &str, key_path: &Path, local_port: u16) -> Result<
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
+        .kill_on_drop(true)
         .status()
+        .await
         .context("Failed to start SSH process")?;
 
     if !status.success() {

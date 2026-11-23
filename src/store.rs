@@ -6,7 +6,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 pub fn app_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().context("Could not find home directory")?;
+    let home = std::env::home_dir().context("Could not find home directory")?;
     let dir = home.join(".region-proxy");
     fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -27,10 +27,14 @@ pub fn save_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
     Ok(())
 }
 
-pub fn write_private_key(key_name: &str, material: &str) -> Result<PathBuf> {
+pub fn key_path(key_name: &str) -> Result<PathBuf> {
     let keys_dir = app_dir()?.join("keys");
     fs::create_dir_all(&keys_dir)?;
-    let path = keys_dir.join(format!("{}.pem", key_name));
+    Ok(keys_dir.join(format!("{}.pem", key_name)))
+}
+
+pub fn write_private_key(key_name: &str, material: &str) -> Result<PathBuf> {
+    let path = key_path(key_name)?;
     fs::OpenOptions::new()
         .write(true)
         .create(true)
